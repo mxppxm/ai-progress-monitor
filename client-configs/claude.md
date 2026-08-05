@@ -1,14 +1,45 @@
 # Claude Code 接入 ai-progress-monitor
 
+两种方式，**推荐用 Hooks**（自动触发、无需 AI 自觉），MCP 作兜底。
+
+## 方式一：Hooks（推荐）
+
+Claude Code 原生支持生命周期 hooks，把这些事件自动上报到看板：
+
+| 事件 | 上报动作 |
+| :--- | :------- |
+| `SessionStart` | 自动 `record_task` |
+| `PostToolUse`  | Bash/Write/Edit 每次成功后自动心跳 `step` |
+| `Stop` | 每轮结束自动把收尾消息记成 `milestone` |
+| `SessionEnd` | 会话结束自动把任务置为 `paused` |
+
+### 配置
+
+把 `client-configs/claude-hooks.json` 里的 `hooks` 合并进 `~/.claude/settings.json`
+（全局）或 `.claude/settings.json`（项目级，可入库），并把 `<repo_root>` 换成实际仓库路径。
+
+```bash
+# 全局生效
+jq '.hooks = (input.hooks)' \
+   ~/.claude/settings.json \
+   <(sed "s|<repo_root>|$PWD|g" client-configs/claude-hooks.json) \
+   > ~/.claude/settings.json.tmp && mv ~/.claude/settings.json.tmp ~/.claude/settings.json
+```
+
+或手动把 hooks 段粘贴进 `~/.claude/settings.json`。生效后重启 Claude Code 即可，
+无需给它任何「记得上报」的提示——hooks 是运行时自动触发的。
+
+> 原理：hook 命令 `python <repo_root>/scripts/hook_report.py --agent claude`
+> 会自动读 stdin 里的 hook JSON（`hook_event_name`/`session_id`/`cwd`…），
+> 生成稳定的 task_id 并写入同一个 SQLite 看板。
+
+## 方式二：MCP（兜底）
+
 Claude Code 通过 `claude mcp add` 命令注册 stdio MCP server。
 
-## 注册
 ```bash
-# 项目级
-claude mcp add ai-progress-monitor --scope project -- /path/to/ai-progress-monitor/.venv/bin/python /path/to/ai-progress-monitor/server/mcp_server.py
-
 # 用户级（全局生效）
-claude mcp add ai-progress-monitor --scope user -- /path/to/ai-progress-monitor/.venv/bin/python /path/to/ai-progress-monitor/server/mcp_server.py
+claude mcp add ai-progress-monitor --scope user -- <repo_root>/.venv/bin/python <repo_root>/server/mcp_server.py
 ```
 
 确认：
@@ -16,11 +47,7 @@ claude mcp add ai-progress-monitor --scope user -- /path/to/ai-progress-monitor/
 claude mcp list
 ```
 
-## 在会话中使用
-Claude 会自动识别 MCP 工具。你可以让它主动上报，甚至可以要求：
+之后 Claude 需在会话里主动上报（它会识别 MCP 工具）。建议把上报约定写进 `~/.claude/CLAUDE.md`。
 
-> 请在任何长任务中，通过 ai-progress-monitor 的 `record_task` 建立任务、`update_progress` 报告进度、`log_node` 标注关键节点。
-
-建议把它写进 `~/.claude/CLAUDE.md` 作为长期指令，这样每次会话都会记得上报。
-
-把路径换成实际仓库路径。
+---
+把 `<repo_root>` 换成你的实际仓库路径。

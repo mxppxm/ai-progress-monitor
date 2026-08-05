@@ -1,0 +1,49 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python <repo_root>/scripts/hook_report.py",
+            "args": ["--agent", "claude"]
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash|Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python <repo_root>/scripts/hook_report.py",
+            "args": ["--agent", "claude"]
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python <repo_root>/scripts/hook_report.py",
+            "args": ["--agent", "claude"]
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python <repo_root>/scripts/hook_report.py",
+            "args": ["--agent", "claude"]
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""自动配置各 AI 工作台的 MCP — 一键接入 ai-progress-monitor。
+"""自动配置各 AI 工作台的 MCP — 一键接入 ai-progress-monitor（MCP 方式）。
+
+> 提示：Claude Code / Codex 等已有成熟原生 hooks，推荐改用
+> `scripts/hook_report.py`（hooks 自动上报，无需 AI 自觉）。见 client-configs/。
+> 本脚本仍用于给尚未用 hooks 的工作台（Cursor/OpenCode 或想走 MCP 的）配置 MCP。
 
 探测已安装的 Agent 并写入对应 MCP 配置，让它们启动会话时自动挂载
 record_task / update_progress / log_node / list_tasks 四个工具。
@@ -56,9 +60,21 @@ def setup_codex():
     if not shutil.which("codex"):
         print("  未安装，跳过")
         return
-    path = HOME / ".codex" / "mcp.json"
-    _merge_json(path, "mcpServers",
-                {"name": "ai-progress-monitor", "command": MCP_RUN, "args": MCP_ARGS})
+    # Codex 新版 MCP 配置统一走官方命令写入 config.toml 的 [mcp_servers]，每会话自动加载
+    try:
+        r = subprocess.run(
+            ["codex", "mcp", "add", "ai-progress-monitor",
+             "--", MCP_RUN, *MCP_ARGS],
+            capture_output=True, text=True, timeout=60)
+        out = (r.stdout + r.stderr).strip()
+        if r.returncode == 0:
+            print(f"  ✓ codex mcp add 成功: {out.splitlines()[-1] if out else ''}")
+        elif "already exists" in out.lower():
+            print("  ✓ 已存在，跳过")
+        else:
+            print(f"  ⚠️ {out}")
+    except Exception as e:
+        print(f"  ⚠️ codex 命令失败: {e}")
 
 
 def setup_cursor():

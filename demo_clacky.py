@@ -5,7 +5,7 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
 async def main():
-    repo = "/Users/mico/clacky_workspace/ai-progress-monitor"
+    repo = os.path.dirname(os.path.abspath(__file__))
     params = StdioServerParameters(command=sys.executable, args=[repo + "/server/mcp_server.py"], cwd=repo)
     async with stdio_client(params) as (read, write):
         async with ClientSession(read, write) as session:

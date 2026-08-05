@@ -2,7 +2,9 @@
 # 启动或重启 ai-progress-monitor 看板服务
 # 供 LaunchAgent 开机自启 / 手动重启使用
 set -e
-REPO="/Users/mico/clacky_workspace/ai-progress-monitor"
+# 仓库根目录 = 本脚本所在目录的上一级（不写死任何绝对路径）
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO="$(cd "$SCRIPT_DIR/.." && pwd)"
 LOG_DIR="$HOME/Library/Logs/ai-progress-monitor"
 mkdir -p "$LOG_DIR"
 
