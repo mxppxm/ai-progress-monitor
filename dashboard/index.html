@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>AI 进度监控平台</title>
+<link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <span class="dot-pulse"></span>
+    <h1>AI 工作台进度监控</h1>
+  </div>
+  <div class="meta">
+    <span id="conn-badge" class="badge">连接中…</span>
+    <span id="task-count" class="badge">0 个任务</span>
+  </div>
+</header>
+
+<main>
+  <section id="filters" class="filters">
+    <button class="chip active" data-filter="all">全部</button>
+    <button class="chip" data-filter="running">运行中</button>
+    <button class="chip" data-filter="done">已完成</button>
+    <button class="chip" data-filter="failed">失败</button>
+    <button class="chip" data-filter="paused">暂停</button>
+  </section>
+
+  <section id="grid" class="grid"></section>
+  <p id="empty" class="empty hidden">暂无任务。等各工作台通过 MCP 上报后会自动出现。</p>
+</main>
+
+<div id="modal" class="modal hidden" onclick="if(event.target===this)closeModal()">
+  <div class="modal-card">
+    <button class="modal-close" onclick="closeModal()">×</button>
+    <h2 id="m-title"></h2>
+    <div class="timeline" id="m-timeline"></div>
+  </div>
+</div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

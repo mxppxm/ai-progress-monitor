@@ -1,0 +1,162 @@
+"""SQLite 数据层 — AI 工作台进度监控平台
+
+存储所有工作台上报的任务、进度、关键节点。
+线程安全：每条 MCP connection 可能在不同线程，用 check_same_thread=False + 锁保护。
+"""
+import json
+import os
+import sqlite3
+import threading
+import time
+from pathlib import Path
+
+DATA_DIR = Path(__file__).resolve().parent.parent / "data"
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+DB_PATH = DATA_DIR / "progress.db"
+
+_LOCK = threading.Lock()
+
+# 关键节点类型枚举（用于触发系统通知）
+NODE_TYPES = ("step", "milestone", "success", "fail")
+
+
+def _connect() -> sqlite3.Connection:
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def init_db() -> None:
+    """初始化表结构（幂等）。"""
+    with _LOCK, _connect() as conn:
+        conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS tasks (
+                task_id    TEXT PRIMARY KEY,
+                agent      TEXT NOT NULL,          -- 工作台名称: codex/cursor/claude/opencode/...
+                name       TEXT NOT NULL,          -- 任务名称
+                status     TEXT NOT NULL DEFAULT 'running',  -- running/done/failed/paused
+                progress   INTEGER NOT NULL DEFAULT 0,       -- 0-100
+                stage      TEXT NOT NULL DEFAULT 'started',  -- 当前阶段
+                detail     TEXT DEFAULT '',                  -- 补充描述
+                started_at REAL NOT NULL,
+                updated_at REAL NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS nodes (
+                id        INTEGER PRIMARY KEY AUTOINCREMENT,
+                task_id   TEXT NOT NULL REFERENCES tasks(task_id),
+                node_type TEXT NOT NULL,            -- step/milestone/success/fail
+                message   TEXT NOT NULL,
+                meta      TEXT DEFAULT '{}',        -- JSON 扩展信息
+                ts        REAL NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_nodes_task ON nodes(task_id, ts);
+            """
+        )
+
+
+def record_task(task_id: str, agent: str, name: str) -> dict:
+    """注册或复用一条任务。若已存在则视为复用，不改状态。"""
+    now = time.time()
+    with _LOCK, _connect() as conn:
+        conn.execute(
+            """INSERT OR IGNORE INTO tasks (task_id, agent, name, status, progress, stage, detail, started_at, updated_at)
+               VALUES (?, ?, ?, 'running', 0, 'started', '', ?, ?)""",
+            (task_id, agent, name, now, now),
+        )
+        row = conn.execute("SELECT * FROM tasks WHERE task_id=?", (task_id,)).fetchone()
+        return dict(row)
+
+
+def update_progress(task_id: str, progress: int | None = None, stage: str | None = None,
+                    status: str | None = None, detail: str | None = None) -> dict | None:
+    """更新任务进度/阶段/状态。返回更新后的任务 dict，若 task 不存在返回 None。"""
+    updates, params = [], []
+    if progress is not None:
+        updates.append("progress=?")
+        params.append(max(0, min(100, int(progress))))
+    if stage is not None:
+        updates.append("stage=?")
+        params.append(stage)
+    if status is not None:
+        updates.append("status=?")
+        params.append(status)
+    if detail is not None:
+        updates.append("detail=?")
+        params.append(detail)
+    if not updates:
+        return get_task(task_id)
+
+    now = time.time()
+    updates.append("updated_at=?")
+    params.append(now)
+    params.append(task_id)
+
+    with _LOCK, _connect() as conn:
+        cur = conn.execute(f"UPDATE tasks SET {', '.join(updates)} WHERE task_id=?", params)
+        if cur.rowcount == 0:
+            return None
+        row = conn.execute("SELECT * FROM tasks WHERE task_id=?", (task_id,)).fetchone()
+        return dict(row)
+
+
+def log_node(task_id: str, node_type: str, message: str, meta: dict | None = None) -> dict | None:
+    """记录一个关键节点。若任务不存在返回 None。"""
+    if node_type not in NODE_TYPES:
+        node_type = "step"
+    now = time.time()
+    with _LOCK, _connect() as conn:
+        # 确保任务存在
+        t = conn.execute("SELECT task_id FROM tasks WHERE task_id=?", (task_id,)).fetchone()
+        if t is None:
+            return None
+        conn.execute(
+            "INSERT INTO nodes (task_id, node_type, message, meta, ts) VALUES (?,?,?,?,?)",
+            (task_id, node_type, message, json.dumps(meta or {}, ensure_ascii=False), now),
+        )
+        # success/fail 自动终结任务状态
+        if node_type in ("success", "fail"):
+            st = "done" if node_type == "success" else "failed"
+            conn.execute(
+                "UPDATE tasks SET status=?, updated_at=?, progress=? WHERE task_id=?",
+                (st, now, 100 if st == "done" else 0, task_id),
+            )
+    return get_task(task_id)
+
+
+def get_task(task_id: str) -> dict | None:
+    with _LOCK, _connect() as conn:
+        row = conn.execute("SELECT * FROM tasks WHERE task_id=?", (task_id,)).fetchone()
+        return dict(row) if row else None
+
+
+def list_tasks(limit: int = 50) -> list[dict]:
+    """按更新时间倒序返回任务列表。"""
+    with _LOCK, _connect() as conn:
+        rows = conn.execute("SELECT * FROM tasks ORDER BY updated_at DESC LIMIT ?", (limit,)).fetchall()
+    return [dict(r) for r in rows]
+
+
+def list_nodes(task_id: str, limit: int = 100) -> list[dict]:
+    with _LOCK, _connect() as conn:
+        rows = conn.execute(
+            "SELECT * FROM nodes WHERE task_id=? ORDER BY ts DESC LIMIT ?", (task_id, limit)
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+# 全局数据版本号，用于 SSE 增量推送
+_VERSION = 0
+
+
+def bump_version() -> int:
+    global _VERSION
+    with _LOCK:
+        _VERSION += 1
+        return _VERSION
+
+
+def get_version() -> int:
+    return _VERSION

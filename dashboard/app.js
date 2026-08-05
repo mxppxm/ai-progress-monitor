@@ -1,0 +1,119 @@
+// AI 进度监控看板前端逻辑
+(() => {
+  const grid = document.getElementById("grid");
+  const empty = document.getElementById("empty");
+  const countEl = document.getElementById("task-count");
+  const badge = document.getElementById("conn-badge");
+
+  let tasks = [];
+  let filter = "all";
+  let nodesCache = {};
+
+  const STATUS_LABEL = { running: "运行中", done: "已完成", failed: "失败", paused: "暂停" };
+
+  // ── event source (SSE) ──
+  function connectSSE() {
+    const es = new EventSource("/api/stream");
+    es.onopen = () => { badge.textContent = "实时连接"; badge.classList.add("on"); };
+    es.onmessage = (e) => {
+      try { render(JSON.parse(e.data).tasks); } catch (_) {}
+    };
+    es.onerror = () => { badge.textContent = "已断开"; badge.classList.remove("on"); };
+  }
+
+  async function loadNodes(taskId) {
+    if (nodesCache[taskId]) return nodesCache[taskId];
+    try {
+      const r = await fetch(`/api/tasks/${taskId}/nodes`);
+      const j = await r.json();
+      nodesCache[taskId] = j.nodes || [];
+      return nodesCache[taskId];
+    } catch (_) { return []; }
+  }
+
+  function render(list) {
+    tasks = list || [];
+    countEl.textContent = `${tasks.length} 个任务`;
+    const visible = tasks.filter(t => filter === "all" || t.status === filter);
+    grid.innerHTML = visible.map(cardHTML).join("");
+    empty.classList.toggle("hidden", visible.length > 0);
+  }
+
+  function cardHTML(t) {
+    const aclass = ["codex","cursor","claude","opencode"].includes(t.agent) ? `agent-${t.agent}` : "agent-default";
+    const status = STATUS_LABEL[t.status] || t.status;
+    const fillClass = t.status === "failed" ? " failed" : t.status === "done" ? " done" : "";
+    return `
+      <div class="card" data-id="${escapeAttr(t.task_id)}">
+        <div class="card-head">
+          <span class="agent-tag ${aclass}">${escapeHtml(t.agent)}</span>
+          <span class="status ${t.status}">${status}</span>
+        </div>
+        <div class="card-title">${escapeHtml(t.name)}</div>
+        <div class="card-detail">${escapeHtml(t.detail || "")}</div>
+        <div class="stage">阶段 · ${escapeHtml(t.stage || "—")}</div>
+        <div class="progress-track">
+          <div class="progress-fill${fillClass}" style="width:${t.progress}%"></div>
+        </div>
+        <div class="card-foot">
+          <span class="updated">更新于 ${ftime(t.updated_at)}</span>
+          <span>${t.progress}%</span>
+        </div>
+      </div>`;
+  }
+
+  async function openModal(id) {
+    const nodes = await loadNodes(id);
+    const t = tasks.find(x => x.task_id === id);
+    if (!t) return;
+    document.getElementById("m-title").textContent = `${t.name} · 节点时间线`;
+    document.getElementById("m-timeline").innerHTML =
+      nodes.length ? nodes.map(nodeHTML).join("") : "<p style='color:var(--muted)'>暂无节点记录</p>";
+    document.getElementById("modal").classList.remove("hidden");
+  }
+
+  function nodeHTML(n) {
+    return `
+      <div class="node ${n.node_type}">
+        <div class="node-type">${n.node_type}</div>
+        <div class="node-msg">${escapeHtml(n.message)}</div>
+        <div class="node-time">${ftime(n.ts)}</div>
+      </div>`;
+  }
+
+  function closeModal() { document.getElementById("modal").classList.add("hidden"); }
+  window.openModal = (id) => openModal(id);
+  window.closeModal = closeModal;
+
+  // ── filters ──
+  document.querySelectorAll(".chip").forEach(c => {
+    c.addEventListener("click", () => {
+      document.querySelectorAll(".chip").forEach(x => x.classList.remove("active"));
+      c.classList.add("active");
+      filter = c.dataset.filter;
+      render(tasks);
+    });
+  });
+
+  // 卡片点击 → 节点详情
+  grid.addEventListener("click", (e) => {
+    const card = e.target.closest(".card");
+    if (card) openModal(card.dataset.id);
+  });
+
+  // ── utils ──
+  function escapeHtml(s) {
+    return String(s ?? "").replace(/[&<>"']/g, c =>
+      ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
+  }
+  function escapeAttr(s) { return String(s ?? "").replace(/"/g, "&quot;"); }
+  function ftime(ts) {
+    if (!ts) return "—";
+    const d = new Date(ts * 1000);
+    return d.toLocaleTimeString("zh-CN", { hour12: false }) + " " + d.toLocaleDateString("zh-CN", { month: "2-digit", day: "2-digit" });
+  }
+
+  // ├── boot ──
+  fetch("/api/tasks").then(r => r.json()).then(j => render(j.tasks)).catch(_ => render([]));
+  connectSSE();
+})();

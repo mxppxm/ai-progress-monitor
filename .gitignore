@@ -1,0 +1,17 @@
+# data db
+data/
+*.db
+*.db-journal
+
+# python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env
+
+# os / editor
+.DS_Store
+.idea/
+.vscode/
+*.log
