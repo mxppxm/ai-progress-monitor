@@ -15,7 +15,7 @@
 
 | Cursor 事件 | 上报动作 |
 | :---------- | :------- |
-| `sessionStart` | `record_task` |
+| `beforeSubmitPrompt` | 用户点发送、开始执行时 `record_task`（新建空会话不触发） |
 | `postToolUse`（Shell/Write/…） | 心跳 `step` |
 | `stop` | `milestone` |
 | `sessionEnd` | 任务置为 `paused` |

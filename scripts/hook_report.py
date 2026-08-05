@@ -69,6 +69,11 @@ def _task_name_for(agent: str, event: dict, task_id: str) -> str:
     title = event.get("session_title")
     if title:
         return title
+    # Cursor beforeSubmitPrompt：用用户首条 prompt 当任务名
+    prompt = (event.get("prompt") or "").strip()
+    if prompt:
+        one = prompt.splitlines()[0].strip()
+        return (one[:80] + "…") if len(one) > 80 else one
     cwd = event.get("cwd") or ""
     proj = Path(cwd).name if cwd else ""
     if proj:
@@ -134,7 +139,8 @@ _HANDLERS = {
 
 # Cursor hooks 用 camelCase 事件名；映射到本脚本统一名
 _EVENT_ALIASES = {
-    "sessionStart": "SessionStart",
+    "sessionStart": "SessionStart",       # 保留兼容，但 Cursor 默认不再挂
+    "beforeSubmitPrompt": "SessionStart", # 用户点发送、真正开始执行时再建任务
     "sessionEnd": "SessionEnd",
     "postToolUse": "PostToolUse",
     "stop": "Stop",
