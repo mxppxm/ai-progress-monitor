@@ -46,7 +46,10 @@ uv venv .venv && uv pip install "mcp[cli]" fastmcp fastapi uvicorn
   并把其中的 <repo_root> 全部替换成真实路径。挂上 SessionStart / PostToolUse / Stop / SessionEnd。
 - Codex：对照当前版本 hooks 文档，在 ~/.codex/config.toml（或项目 config.toml）
   挂上等价生命周期钩子，命令同上，--agent codex。可参考 <repo_root>/client-configs/codex.md。
-- Cursor / OpenCode：hooks 支持有限，请改用下面「方式二 · MCP」。
+- Cursor：把 <repo_root>/client-configs/cursor-hooks.json 合并进 ~/.cursor/hooks.json
+  （或项目 .cursor/hooks.json），替换 <repo_root>，chmod +x <repo_root>/client-configs/cursor-hook.sh。
+  挂上 sessionStart / postToolUse / stop / sessionEnd。详见 client-configs/cursor.md。
+- OpenCode：hooks 支持有限，请改用下面「方式二 · MCP」。
 
 配置完成后告诉我：改了哪些文件、是否需要重启工作台。
 hooks 生效后无需再粘贴上报规则——运行时会自动 record_task / 心跳 / 收尾。

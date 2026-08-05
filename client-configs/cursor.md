@@ -1,17 +1,31 @@
 # Cursor 接入 ai-progress-monitor
 
-Cursor 的 hooks 支持相对有限，**建议用 MCP 方式**接入（稳定可靠）。
+**推荐用 Hooks**（运行时自动上报，无需 AI 自觉调 MCP）。
 
-## 方式一：Hooks（可选）
-如你的 Cursor 版本支持 hooks，可把 `python <repo_root>/scripts/hook_report.py --agent cursor` 挂到
-会话开始 / 工具结束事件上（事件名以你 Cursor 版本的 hooks 配置为准）。
+## 方式一：Hooks（推荐）
 
-## 方式二：MCP（推荐）
+1. 确保本仓库依赖已装（`.venv`），看板可跑。
+2. 把 `client-configs/cursor-hooks.json` 合并进 **用户级** `~/.cursor/hooks.json`
+   （或项目级 `.cursor/hooks.json`），并把其中的 `<repo_root>` 换成真实路径。
+3. 保证 `client-configs/cursor-hook.sh` 可执行：
+   ```bash
+   chmod +x <repo_root>/client-configs/cursor-hook.sh
+   ```
+4. 在 Cursor **Settings → Hooks** 确认已加载；必要时重启 Cursor。
 
-Cursor 通过 `.cursor/mcp.json` 配置 stdio MCP server。
+| Cursor 事件 | 上报动作 |
+| :---------- | :------- |
+| `sessionStart` | `record_task` |
+| `postToolUse`（Shell/Write/…） | 心跳 `step` |
+| `stop` | `milestone` |
+| `sessionEnd` | 任务置为 `paused` |
 
-### 项目级配置
-在你的项目根目录创建 `.cursor/mcp.json`：
+核心命令：`<repo_root>/scripts/hook_report.py --agent cursor`（由 `cursor-hook.sh` 包装）。
+
+## 方式二：MCP（兜底）
+
+不适合 hooks 时再用。写入 `~/.cursor/mcp.json`：
+
 ```json
 {
   "mcpServers": {
@@ -23,17 +37,9 @@ Cursor 通过 `.cursor/mcp.json` 配置 stdio MCP server。
 }
 ```
 
-### 全局配置
-- Cursor 设置 → Features → MCP → 添加
-- Command: `<repo_root>/.venv/bin/python`
-- Args: `<repo_root>/server/mcp_server.py`
+或跑：`<repo_root>/.venv/bin/python <repo_root>/scripts/setup_agents.py --cursor`
 
-配置后重启 Cursor，Tools 面板里会出现 `ai-progress-monitor` 的 4 个工具。
-
-## 在 Cursor 中使用（MCP 方式）
-先在对话里让 Cursor 了解上报约定（也可放进 `.cursor/rules` 让长期生效）：
-
-> 你每次完成阶段性工作时，用 ai-progress-monitor 的 `record_task`/`update_progress`/`log_node` 上报进度到看板。
+MCP 方式还需把上报规则写进 Cursor rules（见 README / AGENTS.md）。Hooks 方式**不需要** rules。
 
 ---
 把 `<repo_root>` 换成你的实际仓库路径。

@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "hooks": {
+    "sessionStart": [
+      {
+        "command": "<repo_root>/client-configs/cursor-hook.sh"
+      }
+    ],
+    "postToolUse": [
+      {
+        "command": "<repo_root>/client-configs/cursor-hook.sh",
+        "matcher": "Shell|Write|EditNotebook|Delete|Task"
+      }
+    ],
+    "stop": [
+      {
+        "command": "<repo_root>/client-configs/cursor-hook.sh"
+      }
+    ],
+    "sessionEnd": [
+      {
+        "command": "<repo_root>/client-configs/cursor-hook.sh"
+      }
+    ]
+  }
+}

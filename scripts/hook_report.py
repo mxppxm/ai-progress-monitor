@@ -132,6 +132,31 @@ _HANDLERS = {
     "SessionEnd": _handle_session_end,
 }
 
+# Cursor hooks 用 camelCase 事件名；映射到本脚本统一名
+_EVENT_ALIASES = {
+    "sessionStart": "SessionStart",
+    "sessionEnd": "SessionEnd",
+    "postToolUse": "PostToolUse",
+    "stop": "Stop",
+}
+
+
+def _normalize_event(event: dict) -> dict:
+    """兼容 Cursor / Claude 等不同工作台的 hook 字段。"""
+    out = dict(event)
+    # Cursor: conversation_id ≈ session_id
+    if not out.get("session_id") and out.get("conversation_id"):
+        out["session_id"] = out["conversation_id"]
+    # Cursor: workspace_roots[0] 可当 cwd
+    if not out.get("cwd"):
+        roots = out.get("workspace_roots") or []
+        if roots:
+            out["cwd"] = roots[0]
+    # Cursor stop: status → message 兜底
+    if not out.get("message") and out.get("status"):
+        out["message"] = f"本轮结束（{out['status']}）"
+    return out
+
 
 def _read_stdin_json() -> dict:
     raw = sys.stdin.read()
@@ -157,7 +182,7 @@ def main() -> int:
 
     db.init_db()
 
-    # 合并 stdin JSON（Claude Code 风格）与显式参数，显式参数优先。
+    # 合并 stdin JSON（Claude / Cursor 风格）与显式参数，显式参数优先。
     # 只有当没显式 --event 时才读 stdin（避免交互终端下阻塞）。
     event = {}
     if args.event is None:
@@ -169,15 +194,18 @@ def main() -> int:
     if args.message:
         event["message"] = args.message
 
-    ev_name = args.event or event.get("hook_event_name")
-    if not ev_name:
+    event = _normalize_event(event)
+
+    raw_ev = args.event or event.get("hook_event_name")
+    if not raw_ev:
         # 无事件信息：静默忽略（首轮 SessionStart 之前的空调用不算错误）
         print(json.dumps({"ok": False, "error": "no event specified"}, ensure_ascii=False))
         return 0
 
+    ev_name = _EVENT_ALIASES.get(raw_ev, raw_ev)
     handler = _HANDLERS.get(ev_name)
     if not handler:
-        print(json.dumps({"ok": False, "event": ev_name, "error": "unsupported event"},
+        print(json.dumps({"ok": False, "event": raw_ev, "error": "unsupported event"},
                          ensure_ascii=False))
         return 0
 
