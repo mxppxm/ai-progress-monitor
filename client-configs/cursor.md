@@ -16,7 +16,7 @@
 | Cursor 事件 | 上报动作 |
 | :---------- | :------- |
 | `sessionStart` | 注入黄灯用语提示（不建任务） |
-| `beforeSubmitPrompt` | 用户点发送 → `record_task` / 重启为 running |
+| `beforeSubmitPrompt` | 用户点发送 → `record_task` / 重启为 running，标题改为本轮提示词 |
 | `postToolUse`（Shell/Write/…） | 心跳 `step` |
 | `afterAgentResponse` | 末条含「需要你选择 / 你来决定」等 → 黄灯 pending |
 | `stop` | 停止输出 → `success`（已结束）；已黄灯则保持 pending |

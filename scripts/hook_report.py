@@ -5,9 +5,9 @@ Hooks 由工作台运行时**自动触发**，无需 AI 自觉调 MCP 工具，�
 本脚本复用 server/db.py 的同一套 SQLite 数据层，与 MCP 方式写入同一张表。
 
 语义（与看板三态对齐）：
-  - 开始/继续对话 → running
+  - 开始/继续对话 → running；重启时标题改为本轮用户提示词
   - 停止输出（stop）→ done；若末条回复含拍板用语 → pending（黄灯）
-  - 再发消息 → 同一 task 重启为 running
+  - 再发消息 → 同一 task 重启为 running，标题跟新提示词
 
 支持两种调用方式：
 
@@ -53,19 +53,36 @@ def _task_id_for(agent: str, event: dict) -> str:
     return f"{agent}-{int(time.time())}"
 
 
-def _task_name_for(agent: str, event: dict, task_id: str) -> str:
-    """从 hook 上下文抽一个人类可读的任务名。"""
+def _user_prompt(event: dict) -> str:
+    """各工作台用户提示词字段兼容（Cursor prompt / Codex UserPromptSubmit 等）。"""
+    for key in ("prompt", "user_prompt", "content"):
+        val = event.get(key)
+        if isinstance(val, str) and val.strip():
+            return val.strip()
+    # CLI / 显式 name 也算「本轮标题」
     name = event.get("name")
-    if name:
-        return name
-    title = event.get("session_title")
-    if title:
-        return title
-    # Cursor beforeSubmitPrompt：用用户首条 prompt 当任务名
-    prompt = (event.get("prompt") or "").strip()
+    if isinstance(name, str) and name.strip():
+        return name.strip()
+    return ""
+
+
+def _title_from_prompt(prompt: str, limit: int = 100) -> str:
+    """用提示词首行做看板标题，过长截断。"""
+    one = prompt.splitlines()[0].strip() or prompt.strip()
+    one = " ".join(one.split())  # 压空白，看板更清晰
+    if len(one) > limit:
+        return one[: limit - 1] + "…"
+    return one
+
+
+def _task_name_for(agent: str, event: dict, task_id: str) -> str:
+    """从 hook 上下文抽一个人类可读的任务名（优先本轮用户提示词）。"""
+    prompt = _user_prompt(event)
     if prompt:
-        one = prompt.splitlines()[0].strip()
-        return (one[:80] + "…") if len(one) > 80 else one
+        return _title_from_prompt(prompt)
+    title = event.get("session_title")
+    if isinstance(title, str) and title.strip():
+        return title.strip()[:100]
     cwd = event.get("cwd") or ""
     proj = Path(cwd).name if cwd else ""
     if proj:
@@ -104,20 +121,29 @@ def _ensure_task(agent: str, event: dict) -> tuple[str, dict | None]:
 
 
 def _handle_session_start(agent: str, event: dict) -> dict:
-    """用户点发送 / 会话开始：建任务或把已结束/待选择的任务重启为 running。"""
+    """用户点发送 / 会话开始：建任务或重启为 running；有新提示词则改标题。"""
     task_id = _task_id_for(agent, event)
     name = _task_name_for(agent, event, task_id)
-    task = db.record_task(task_id, agent, name)
+    # 仅当本轮带了真实提示词才改标题，避免无 prompt 的兜底名覆盖旧标题
+    update_name = bool(_user_prompt(event))
+    task = db.record_task(task_id, agent, name, update_name=update_name)
     db.bump_version()
     return {"ok": True, "task_id": task_id, "action": "record_task", "task": task}
 
 
 def _handle_inject_hint(agent: str, event: dict) -> dict:
-    """Cursor sessionStart：只注入黄灯用语提示，不建任务（避免空会话误报）。"""
+    """空会话开始：只注入黄灯用语提示，不建任务（Cursor sessionStart / Codex SessionStart）。"""
+    ev = event.get("hook_event_name") or "SessionStart"
     return {
         "ok": True,
         "action": "inject_hint",
+        # Cursor
         "additional_context": _CHOICE_HINT,
+        # Codex SessionStart
+        "hookSpecificOutput": {
+            "hookEventName": ev if ev not in ("sessionStart",) else "SessionStart",
+            "additionalContext": _CHOICE_HINT,
+        },
     }
 
 
@@ -125,7 +151,8 @@ def _handle_post_tool_use(agent: str, event: dict) -> dict:
     """工具用完后：记一个 step 心跳节点。"""
     task_id = _task_id_for(agent, event)
     name = _task_name_for(agent, event, task_id)
-    db.record_task(task_id, agent, name)  # 幂等：不存在则建；存在则保持/恢复 running
+    # 心跳不改标题（无用户提示词时兜底名会污染看板）
+    db.record_task(task_id, agent, name, update_name=False)
     tool = event.get("tool_name") or "tool"
     msg = f"执行了 {tool}"
     log = db.log_node(task_id, "step", msg, {"tool": tool})
@@ -217,15 +244,25 @@ _HANDLERS = {
     "SessionEnd": _handle_session_end,
 }
 
-# Cursor hooks 用 camelCase 事件名；映射到本脚本统一名
+# 各工作台事件名 → 本脚本统一名
 _EVENT_ALIASES = {
+    # Cursor（camelCase）
     "sessionStart": "InjectHint",             # 空会话只注入提示，不建任务
     "beforeSubmitPrompt": "SessionStart",     # 用户点发送才建/重启任务
     "sessionEnd": "SessionEnd",
     "postToolUse": "PostToolUse",
     "afterAgentResponse": "AfterAgentResponse",
     "stop": "Stop",
+    # Codex / Claude 风格
+    "UserPromptSubmit": "SessionStart",       # 用户提交提示词 → 建/重启 + 改标题
 }
+
+
+def _resolve_event(agent: str, raw_ev: str) -> str:
+    """解析事件；Codex 的 SessionStart 只注入提示（建任务改走 UserPromptSubmit）。"""
+    if agent == "codex" and raw_ev == "SessionStart":
+        return "InjectHint"
+    return _EVENT_ALIASES.get(raw_ev, raw_ev)
 
 
 def _normalize_event(event: dict) -> dict:
@@ -288,7 +325,7 @@ def main() -> int:
         print(json.dumps({"ok": False, "error": "no event specified"}, ensure_ascii=False))
         return 0
 
-    ev_name = _EVENT_ALIASES.get(raw_ev, raw_ev)
+    ev_name = _resolve_event(args.agent, raw_ev)
     handler = _HANDLERS.get(ev_name)
     if not handler:
         print(json.dumps({"ok": False, "event": raw_ev, "error": "unsupported event"},

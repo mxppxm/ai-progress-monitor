@@ -19,7 +19,7 @@
    - 删除要求调用 `record_task` 等的 Cursor rule（如 `~/.cursor/rules/ai-progress-monitor.mdc`）
 4. 在 Settings → Hooks 确认已加载；必要时重启 Cursor
 
-语义：点发送建/重启任务；停输出＝结束；回复含「需要你选择 / 你来决定」＝黄灯；空会话不建任务。
+语义：点发送建/重启任务（标题＝本轮提示词）；停输出＝结束；回复含「需要你选择 / 你来决定」＝黄灯；空会话不建任务。
 
 ### Claude Code
 
@@ -27,8 +27,13 @@
 
 ### Codex
 
-对照当前 hooks 文档配置 `~/.codex/config.toml`，命令：
-`python REPO/scripts/hook_report.py --agent codex`（见 `client-configs/codex.md`）。
+1. 把 `REPO/client-configs/codex-hooks.json` 写成 `~/.codex/hooks.json`（替换 `<repo_root>` → `REPO`）
+2. `~/.codex/config.toml` 确保 `[features] hooks = true`
+3. 在 Codex 执行 `/hooks` 信任新 hooks；必要时重启
+
+语义：`UserPromptSubmit` 建/重启（标题＝本轮提示词）；`SessionStart` 只注入黄灯提示；`Stop`＝结束/黄灯；空会话不建任务。
+
+也可让人类把 README「Codex 一键接入」整段 prompt 贴进 Codex 自动安装。
 
 Hooks 生效后**不要**再写「请自觉调 MCP」类规则。
 

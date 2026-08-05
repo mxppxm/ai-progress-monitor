@@ -29,7 +29,7 @@ def record_task(task_id: str, agent: str, name: str) -> dict:
         agent:   工作台名称，如 codex / cursor / claude / opencode
         name:    任务的人类可读名称
     """
-    result = db.record_task(task_id, agent, name)
+    result = db.record_task(task_id, agent, name, update_name=True)
     db.bump_version()
     return {"ok": True, "task": result}
 

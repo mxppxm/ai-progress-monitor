@@ -1,0 +1,54 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "<repo_root>/.venv/bin/python <repo_root>/scripts/hook_report.py --agent codex"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "<repo_root>/.venv/bin/python <repo_root>/scripts/hook_report.py --agent codex"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "<repo_root>/.venv/bin/python <repo_root>/scripts/hook_report.py --agent codex"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "<repo_root>/.venv/bin/python <repo_root>/scripts/hook_report.py --agent codex"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "<repo_root>/.venv/bin/python <repo_root>/scripts/hook_report.py --agent codex"
+          }
+        ]
+      }
+    ]
+  }
+}

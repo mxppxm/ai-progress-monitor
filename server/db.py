@@ -77,8 +77,8 @@ def init_db() -> None:
             conn.execute("ALTER TABLE tasks ADD COLUMN archived INTEGER NOT NULL DEFAULT 0")
 
 
-def record_task(task_id: str, agent: str, name: str) -> dict:
-    """注册或复用一条任务。复用时恢复为 running（继续对话＝重启），保留原名称。"""
+def record_task(task_id: str, agent: str, name: str, *, update_name: bool = False) -> dict:
+    """注册或复用一条任务。复用时恢复为 running；update_name 时同步改标题（新提示词）。"""
     now = time.time()
     with _LOCK, _connect() as conn:
         conn.execute(
@@ -86,11 +86,17 @@ def record_task(task_id: str, agent: str, name: str) -> dict:
                VALUES (?, ?, ?, 'running', 0, 'started', '', 0, ?, ?)""",
             (task_id, agent, name, now, now),
         )
-        # 复用：取消存档、回到运行中（名称保留首次建立时的）
-        conn.execute(
-            "UPDATE tasks SET archived=0, status='running', updated_at=? WHERE task_id=?",
-            (now, task_id),
-        )
+        # 复用：取消存档、回到运行中；可选同步标题
+        if update_name and name:
+            conn.execute(
+                "UPDATE tasks SET archived=0, status='running', name=?, updated_at=? WHERE task_id=?",
+                (name, now, task_id),
+            )
+        else:
+            conn.execute(
+                "UPDATE tasks SET archived=0, status='running', updated_at=? WHERE task_id=?",
+                (now, task_id),
+            )
         row = conn.execute("SELECT * FROM tasks WHERE task_id=?", (task_id,)).fetchone()
         return dict(row)
 
