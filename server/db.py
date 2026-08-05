@@ -177,19 +177,26 @@ def get_task(task_id: str) -> dict | None:
         return dict(row) if row else None
 
 
-def list_tasks(limit: int = 50, include_archived: bool = False) -> list[dict]:
-    """按更新时间倒序返回任务列表。默认隐藏已存档；include_archived=True 时全量返回。"""
+def list_tasks(limit: int = 200) -> list[dict]:
+    """按更新时间倒序返回最近 N 天内的未归档任务（默认 3 天）。"""
+    cutoff = time.time() - 3 * 86400
     with _LOCK, _connect() as conn:
-        if include_archived:
-            rows = conn.execute(
-                "SELECT * FROM tasks ORDER BY updated_at DESC LIMIT ?", (limit,)
-            ).fetchall()
-        else:
-            rows = conn.execute(
-                "SELECT * FROM tasks WHERE archived=0 ORDER BY updated_at DESC LIMIT ?",
-                (limit,),
-            ).fetchall()
+        rows = conn.execute(
+            "SELECT * FROM tasks WHERE archived=0 AND updated_at>=? ORDER BY updated_at DESC LIMIT ?",
+            (cutoff, limit),
+        ).fetchall()
     return [dict(r) for r in rows]
+
+
+def list_agents() -> list[str]:
+    """返回最近3天内有任务的工作台列表（用于泳道）。"""
+    cutoff = time.time() - 3 * 86400
+    with _LOCK, _connect() as conn:
+        rows = conn.execute(
+            "SELECT DISTINCT agent FROM tasks WHERE archived=0 AND updated_at>=? ORDER BY agent",
+            (cutoff,),
+        ).fetchall()
+    return [r["agent"] for r in rows]
 
 
 def count_archived() -> int:

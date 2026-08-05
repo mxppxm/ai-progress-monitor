@@ -39,8 +39,7 @@ _subscribers: set[asyncio.Queue] = set()
 
 
 def _publish():
-    # 全量发给前端（含已存档），由前端决定显示哪些
-    data = json.dumps({"tasks": db.list_tasks(include_archived=True)}, ensure_ascii=False)
+    data = json.dumps({"tasks": db.list_tasks()}, ensure_ascii=False)
     for q in list(_subscribers):
         try:
             q.put_nowait(data)
@@ -54,8 +53,8 @@ def index():
 
 
 @app.get("/api/tasks")
-def tasks_api(include_archived: bool = False):
-    return {"tasks": db.list_tasks(include_archived=include_archived), "archived": db.count_archived()}
+def tasks_api():
+    return {"tasks": db.list_tasks()}
 
 
 @app.post("/api/tasks/{task_id}/archive")
@@ -90,7 +89,7 @@ async def stream():
     async def gen():
         try:
             # 首次全量
-            initial = json.dumps({"tasks": db.list_tasks(include_archived=True)}, ensure_ascii=False)
+            initial = json.dumps({"tasks": db.list_tasks()}, ensure_ascii=False)
             yield f"data: {initial}\n\n"
             idle = 0
             while True:
