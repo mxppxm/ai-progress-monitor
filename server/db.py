@@ -164,6 +164,27 @@ def log_node(task_id: str, node_type: str, message: str, meta: dict | None = Non
     return get_task(task_id)
 
 
+def end_task(task_id: str) -> dict | None:
+    """手动结束任务：状态设为 done，并记一条 success 节点。已结束则原样返回。"""
+    now = time.time()
+    with _LOCK, _connect() as conn:
+        row = conn.execute("SELECT * FROM tasks WHERE task_id=?", (task_id,)).fetchone()
+        if row is None:
+            return None
+        if row["status"] in ("done", "failed"):
+            return dict(row)
+        conn.execute(
+            "UPDATE tasks SET status='done', progress=100, updated_at=?, archived=0 WHERE task_id=?",
+            (now, task_id),
+        )
+        conn.execute(
+            "INSERT INTO nodes (task_id, node_type, message, meta, ts) VALUES (?,?,?,?,?)",
+            (task_id, "success", "手动结束", "{}", now),
+        )
+        row = conn.execute("SELECT * FROM tasks WHERE task_id=?", (task_id,)).fetchone()
+        return dict(row)
+
+
 def archive_task(task_id: str) -> dict | None:
     """把任务标记为已存档，从运行/默认列表隐藏（保留历史）。"""
     now = time.time()

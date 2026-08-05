@@ -6,9 +6,10 @@
   const timeEl = document.getElementById("updated-at");
 
   let tasks = [];
-  let nodesCache = {};
   const POLL_INTERVAL = 5000;
   let lastSSEMsgAt = Date.now();
+
+  const LANE_ORDER_KEY = "apm-lane-order";
 
   const AGENT_META = {
     codex:    { label: "Codex",    icon: "▣" },
@@ -39,27 +40,71 @@
   }
   setInterval(() => { if (Date.now() - lastSSEMsgAt > POLL_INTERVAL * 2) poll(); }, POLL_INTERVAL);
 
+  // ── 泳道顺序：首次出现顺序固定，新泳道追加到右侧 ──
+  function loadLaneOrder() {
+    try { return JSON.parse(localStorage.getItem(LANE_ORDER_KEY) || "[]"); }
+    catch (_) { return []; }
+  }
+  function saveLaneOrder(order) {
+    localStorage.setItem(LANE_ORDER_KEY, JSON.stringify(order));
+  }
+  function orderedAgents(present) {
+    const seen = new Set();
+    const order = [];
+    for (const a of loadLaneOrder()) {
+      if (present.includes(a) && !seen.has(a)) {
+        order.push(a);
+        seen.add(a);
+      }
+    }
+    for (const a of present) {
+      if (!seen.has(a)) {
+        order.push(a);
+        seen.add(a);
+      }
+    }
+    saveLaneOrder(order);
+    return order;
+  }
+
   // ── 泳道渲染 ──
   function isRunning(t) { return t.status === "running"; }
   function isPending(t) { return t.status === "pending"; }
   function isEnded(t)   { return !isRunning(t) && !isPending(t); }
   const DONE_LABEL = { done: "已结束", failed: "已结束", paused: "暂停", pending: "待选择" };
 
+  /** 运行中 > 待选择 > 已结束；同组内按更新时间倒序 */
+  function statusRank(t) {
+    if (isRunning(t)) return 0;
+    if (isPending(t)) return 1;
+    return 2;
+  }
+  function sortTasks(pool) {
+    pool.sort((a, b) => {
+      const d = statusRank(a) - statusRank(b);
+      return d !== 0 ? d : b.updated_at - a.updated_at;
+    });
+    return pool;
+  }
+
   function render(list) {
     tasks = list || [];
     empty.classList.toggle("hidden", tasks.length > 0);
 
-    // 按 agent 分组
     const groups = {};
     tasks.forEach(t => { (groups[t.agent] = groups[t.agent] || []).push(t); });
-    const agents = Object.keys(groups).sort();
+    const agents = orderedAgents(Object.keys(groups));
 
     timeEl.textContent = new Date().toLocaleTimeString("zh-CN", { hour12: false });
 
+    const scrollMap = {};
+    board.querySelectorAll(".lane-body").forEach(el => {
+      const agent = el.closest(".lane")?.dataset.agent;
+      if (agent) scrollMap[agent] = el.scrollTop;
+    });
+
     board.innerHTML = agents.map(agent => {
-      const pool = groups[agent].slice();
-      // 排序：最新更新的在最上面
-      pool.sort((a, b) => b.updated_at - a.updated_at);
+      const pool = sortTasks(groups[agent].slice());
       const run = pool.filter(isRunning).length;
       const pend = pool.filter(isPending).length;
       const ended = pool.length - run - pend;
@@ -79,15 +124,22 @@
           <div class="lane-body">${cards || `<p class="lane-empty">暂无任务</p>`}</div>
         </section>`;
     }).join("");
+
+    board.querySelectorAll(".lane-body").forEach(el => {
+      const agent = el.closest(".lane")?.dataset.agent;
+      if (agent && scrollMap[agent] != null) el.scrollTop = scrollMap[agent];
+    });
   }
 
   function cardHTML(t) {
-    const meta = AGENT_META[t.agent] || { label: t.agent };
     const cls = isEnded(t) ? " ended" : (isPending(t) ? " pending" : "");
     const dotCls = isEnded(t) ? " off" : (isPending(t) ? " pending" : " on");
     const statusLabel = isRunning(t) ? "运行中"
                        : isPending(t) ? "待选择"
                        : (DONE_LABEL[t.status] || "已结束");
+    const endBtn = !isEnded(t)
+      ? `<button type="button" class="task-end" data-end="${escapeAttr(t.task_id)}" title="手动结束">结束</button>`
+      : "";
     return `
       <article class="task${cls}" data-id="${escapeAttr(t.task_id)}">
         <div class="task-top">
@@ -99,44 +151,33 @@
         <div class="task-stage">${escapeHtml(t.stage || "—")}</div>
         <footer class="task-foot">
           <span>${ftime(t.updated_at)}</span>
+          ${endBtn}
         </footer>
       </article>`;
   }
 
-  // ── 节点弹窗 ──
-  async function loadNodes(taskId) {
-    if (nodesCache[taskId]) return nodesCache[taskId];
+  async function endTask(taskId) {
     try {
-      const j = await (await fetch(`/api/tasks/${taskId}/nodes`)).json();
-      nodesCache[taskId] = j.nodes || [];
-      return nodesCache[taskId];
-    } catch (_) { return []; }
-  }
-
-  function openModal(id) {
-    const t = tasks.find(x => x.task_id === id);
-    if (!t) return;
-    document.getElementById("m-title").textContent = `${t.name} · 节点`;
-    document.getElementById("m-timeline").innerHTML = "";
-    document.getElementById("modal").classList.remove("hidden");
-    loadNodes(id).then(nodes => {
-      document.getElementById("m-timeline").innerHTML =
-        nodes.length ? nodes.map(nodeHTML).join("") : "<p class='m-none'>暂无节点记录</p>";
-    });
-  }
-
-  function nodeHTML(n) {
-    return `<div class="node ${n.node_type}">
-      <div class="node-type">${n.node_type}</div>
-      <div class="node-msg">${escapeHtml(n.message)}</div>
-      <div class="node-time">${ftime(n.ts)}</div></div>`;
+      const res = await fetch(`/api/tasks/${encodeURIComponent(taskId)}/end`, { method: "POST" });
+      if (!res.ok) return;
+      const j = await res.json();
+      if (j.task) {
+        const idx = tasks.findIndex(t => t.task_id === taskId);
+        if (idx >= 0) {
+          tasks[idx] = j.task;
+          render(tasks);
+        }
+      }
+    } catch (_) {}
   }
 
   board.addEventListener("click", e => {
-    const card = e.target.closest(".task");
-    if (card) openModal(card.dataset.id);
+    const endBtn = e.target.closest(".task-end");
+    if (endBtn) {
+      e.preventDefault();
+      endTask(endBtn.dataset.end);
+    }
   });
-  window.closeModal = () => document.getElementById("modal").classList.add("hidden");
 
   // ── utils ──
   function escapeHtml(s) {

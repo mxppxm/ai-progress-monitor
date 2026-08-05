@@ -4,6 +4,7 @@
   GET /           看板前端页面
   GET /api/tasks  拉取当前任务列表（JSON）
   GET /api/tasks/{id}/nodes  拉取某个任务的节点时间线
+  POST /api/tasks/{id}/end   手动结束任务
   GET /api/stream SSE 实时推送：任务数据变更时自动 push
 
 启动：
@@ -55,6 +56,17 @@ def index():
 @app.get("/api/tasks")
 def tasks_api():
     return {"tasks": db.list_tasks()}
+
+
+@app.post("/api/tasks/{task_id}/end")
+def end_api(task_id: str):
+    """手动结束任务（看板卡片「结束」按钮）。"""
+    t = db.end_task(task_id)
+    if t is None:
+        raise HTTPException(status_code=404, detail="task not found")
+    db.bump_version()
+    _publish()
+    return {"ok": True, "task": t}
 
 
 @app.post("/api/tasks/{task_id}/archive")
