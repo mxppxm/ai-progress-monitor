@@ -27,11 +27,15 @@ OpenCode┘                                                  │
 从现在起，请在每个会话中自动通过 ai-progress-monitor MCP 上报你的任务进度，
 无需我每次提醒。规则如下：
 1. 会话开始、或接手一个长任务时：调用 record_task
-   （task_id=你所属工作台名-短序号，agent=你所属工作台名，name=任务名，stage=starting）
-2. 推进到新阶段或进度变化时：调用 update_progress（progress=0-100，stage=coding/testing/deploying 等）
+   （task_id=你所属工作台名-短序号，agent=你所属工作台名，name=任务名）
+2. 推进到新阶段时：调用 update_progress（stage=coding/testing/deploying 等阶段名）
 3. 到达重要节点时：调用 log_node（node_type=step 或 milestone，message=简短中文描述）
-4. 任务完成：调用 log_node（node_type=success）；失败：调用 log_node（node_type=failed）
-   注：milestone / success / fail 会自动触发系统通知并更新任务状态。
+4. 任务遇到需要我拍板/选择的决策点（比如"方案 A 还是 B"）时：调用 log_node，
+   message 里带上“需要选择 / 请你选 / 你来决定”等字样，
+   任务会自动标为「待选择」→ 看板亮黄灯提醒我去选。
+5. 任务完成：调用 log_node（node_type=success）；失败：调用 log_node（node_type=failed）
+   注：milestone / success / fail 会自动触发系统通知并更新任务状态；
+       一旦 success，之前的「待选择」黄灯自动熄灭。
 判断标准：不要等我要求才上报，做了实质工作就自动上报。
 若 MCP 工具暂时不可用，静默跳过，不要阻塞主任务。
 ```
@@ -40,11 +44,14 @@ OpenCode┘                                                  │
 
 ## 功能
 - **MCP 上报**：`record_task` / `update_progress` / `log_node` / `list_tasks` 四个工具
+- **三态看板**：每张任务卡按**运行中(绿)·待选择(黄灯)·已结束(灰)** 三色显示；
+  AI 上报带“需要选择/你来决定”等决策意图的节点时，任务自动亮**黄灯**提醒你去拍板，
+  success 后黄灯自然熄灭
 - **实时看板**：SSE 秒级刷新（带心跳保活），断线自动切前端兜底轮询，无需手动刷新
 - **一键接入**：`setup_agents.py` 自动给各工作台配好 MCP
 - **开机自启**：LaunchAgent 开机拉起 + 崩溃自愈
 - **节点时间线**：点击任务卡片查看其完整执行节点记录
-- **系统通知**：`milestone` / `success` / `fail` 节点触发 macOS 横幅通知
+- **系统通知**：`milestone` / `success` / `fail` 节点触发 macOS 横幅通知，`待选择` 另有黄灯提醒
 
 ## 快速开始
 
@@ -91,8 +98,9 @@ launchctl load -w ~/Library/LaunchAgents/com.mxppxm.ai-progress-monitor.plist
 ## 工作台上报约定（写给 AI 的通用指令）
 让任何接入的 AI 遵守：
 > 长任务开始调用 `record_task`（task_id=工作台名-序号, agent=工作台名, name=任务名）
-> 阶段切换调用 `update_progress`（progress=0-100, stage=coding/testing/deploying）
+> 阶段切换调用 `update_progress`（stage=coding/testing/deploying）
 > 重要节点调用 `log_node`（step/milestone/success/fail，milestone 与 success/fail 会触发系统通知）
+> 需要我拍板/选择时调用 `log_node`（message 带“需要选择/你来决定/选 A 或 B”等字样，任务自动亮黄灯进入「待选择」，我处理后 success 即熄灭）
 
 ## 目录结构
 ```

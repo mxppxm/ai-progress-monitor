@@ -40,8 +40,10 @@
   setInterval(() => { if (Date.now() - lastSSEMsgAt > POLL_INTERVAL * 2) poll(); }, POLL_INTERVAL);
 
   // ── 泳道渲染 ──
-  function isDone(t) { return t.status !== "running"; }
-  const DONE_LABEL = { done: "完成", failed: "失败", paused: "暂停" };
+  function isRunning(t) { return t.status === "running"; }
+  function isPending(t) { return t.status === "pending"; }
+  function isEnded(t)   { return !isRunning(t) && !isPending(t); }
+  const DONE_LABEL = { done: "已结束", failed: "已结束", paused: "暂停", pending: "待选择" };
 
   function render(list) {
     tasks = list || [];
@@ -56,10 +58,11 @@
 
     board.innerHTML = agents.map(agent => {
       const pool = groups[agent].slice();
-      // 排序：运行中在最上层，其余下沉
-      pool.sort((a, b) => (isDone(a) - isDone(b)) || (b.updated_at - a.updated_at));
-      const run = pool.filter(t => !isDone(t)).length;
-      const done = pool.length - run;
+      // 排序：最新更新的在最上面
+      pool.sort((a, b) => b.updated_at - a.updated_at);
+      const run = pool.filter(isRunning).length;
+      const pend = pool.filter(isPending).length;
+      const ended = pool.length - run - pend;
       const meta = AGENT_META[agent] || { label: agent, icon: "•" };
       const cards = pool.map(cardHTML).join("");
       return `
@@ -69,7 +72,8 @@
             <h2 class="lane-title">${escapeHtml(meta.label)}</h2>
             <div class="lane-stats">
               ${run ? `<span class="st running">运行中 ${run}</span>` : ""}
-              ${done ? `<span class="st muted">完成 ${done}</span>` : ""}
+              ${pend ? `<span class="st pending">待选择 ${pend}</span>` : ""}
+              ${ended ? `<span class="st muted">已结束 ${ended}</span>` : ""}
             </div>
           </header>
           <div class="lane-body">${cards || `<p class="lane-empty">暂无任务</p>`}</div>
@@ -79,21 +83,21 @@
 
   function cardHTML(t) {
     const meta = AGENT_META[t.agent] || { label: t.agent };
-    const done = isDone(t);
-    const statusLabel = done ? (DONE_LABEL[t.status] || "完成") : "运行中";
-    const fillClass = done ? " done" : "";
+    const cls = isEnded(t) ? " ended" : (isPending(t) ? " pending" : "");
+    const dotCls = isEnded(t) ? " off" : (isPending(t) ? " pending" : " on");
+    const statusLabel = isRunning(t) ? "运行中"
+                       : isPending(t) ? "待选择"
+                       : (DONE_LABEL[t.status] || "已结束");
     return `
-      <article class="task${done ? " done" : ""}" data-id="${escapeAttr(t.task_id)}">
+      <article class="task${cls}" data-id="${escapeAttr(t.task_id)}">
         <div class="task-top">
-          <span class="dot ${done ? "off" : "on"}"></span>
+          <span class="dot ${dotCls.trim()}"></span>
           <h3 class="task-name">${escapeHtml(t.name)}</h3>
-          <span class="task-status ${done ? "done" : "running"}">${statusLabel}</span>
+          <span class="task-status ${isRunning(t) ? "running" : isPending(t) ? "pending" : "ended"}">${statusLabel}</span>
         </div>
         ${t.detail ? `<p class="task-detail">${escapeHtml(t.detail)}</p>` : ""}
         <div class="task-stage">${escapeHtml(t.stage || "—")}</div>
-        <div class="progress"><span style="width:${t.progress}%"></span></div>
         <footer class="task-foot">
-          <span>${t.progress}%</span>
           <span>${ftime(t.updated_at)}</span>
         </footer>
       </article>`;

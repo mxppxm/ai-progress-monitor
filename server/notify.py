@@ -42,5 +42,25 @@ def notify_node(agent: str, task_name: str, node_type: str, message: str) -> Non
         pass
 
 
+def notify_choice(agent: str, task_name: str, message: str) -> None:
+    """待选择(黄灯)提醒：任务出现需要用户拍板的决策点时弹横幅。"""
+    icon = "🟡"
+    title = f"{icon} {agent} · 待选择：{task_name}"
+    notifier = _best_notifier()
+    body = (message or "有一个决策点需要你过去选择").strip()[:80]
+    try:
+        if notifier == "terminal-notifier":
+            subprocess.run(
+                ["terminal-notifier", "-title", title, "-message", body,
+                 "-sound", "default"],
+                check=False, timeout=5, capture_output=True,
+            )
+        else:
+            script = f'display notification "{_safe(body)}" with title "{_safe(title)}"'
+            subprocess.run(["osascript", "-e", script], check=False, timeout=5, capture_output=True)
+    except Exception:
+        pass
+
+
 def _safe(s: str) -> str:
     return s.replace('\\', '\\\\').replace('"', '\\"')[:80]

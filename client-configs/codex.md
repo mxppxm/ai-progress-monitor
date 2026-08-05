@@ -29,7 +29,8 @@ codex mcp add ai-progress-monitor -- /path/to/ai-progress-monitor/.venv/bin/pyth
 对话里直接让 Codex 上报进度，例如：
 
 > 任务开始：调用 `record_task` task_id=codex-001 agent=codex name="重构登录模块"
-> 写代码中：`update_progress` progress=50 stage=coding
+> 写代码中：`update_progress` stage=coding
+> 中途需拍板：`log_node` node_type=step message="登录方案 A 还是 B，需要你选择"（任务自动亮黄灯）
 > 完成：`log_node` node_type=milestone message="登录重构完成，测试通过"
 
 把路径换成你的实际仓库路径即可。

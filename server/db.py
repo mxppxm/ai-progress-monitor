@@ -19,6 +19,21 @@ _LOCK = threading.Lock()
 # 关键节点类型枚举（用于触发系统通知）
 NODE_TYPES = ("step", "milestone", "success", "fail")
 
+# 「待选择」＝黄灯：任务上报节点时，若 message 命中这些关键词，则把任务标为
+# 待选择(pending)，提醒用户有一个决策点需要过去选择/拍板。任务后续结束(success)后黄灯自然熄灭。
+CHOICE_KEYWORDS = (
+    "需要选择", "请你选择", "请选择", "需要你选", "需要你决定",
+    "你来决定", "你来定", "请你决定", "请你拍板", "你来拍板",
+    "选 a", "选 b", "选择 a", "选择 b", "a 还是 b", "a或b",
+    "二选一", "待选择", "得你定", "等你决定", "等你的选择",
+)
+
+
+def is_choice_message(message: str) -> bool:
+    """判断节点 message 是否包含'需要用户选择'的决策意图（忽略大小写）。"""
+    m = (message or "").lower()
+    return any(kw in m for kw in CHOICE_KEYWORDS)
+
 
 def _connect() -> sqlite3.Connection:
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
@@ -128,12 +143,18 @@ def log_node(task_id: str, node_type: str, message: str, meta: dict | None = Non
             "INSERT INTO nodes (task_id, node_type, message, meta, ts) VALUES (?,?,?,?,?)",
             (task_id, node_type, message, json.dumps(meta or {}, ensure_ascii=False), now),
         )
-        # success/fail 自动终结任务状态
+        # success/fail 自动终结任务状态（同时熄灭之前的「待选择」黄灯）
         if node_type in ("success", "fail"):
             st = "done" if node_type == "success" else "failed"
             conn.execute(
                 "UPDATE tasks SET status=?, updated_at=?, progress=? WHERE task_id=?",
                 (st, now, 100 if st == "done" else 0, task_id),
+            )
+        # 节点带「需要用户选择」意图 → 标为待选择(黄灯)；仅在非终结节点上生效
+        elif is_choice_message(message):
+            conn.execute(
+                "UPDATE tasks SET status='pending', updated_at=? WHERE task_id=?",
+                (now, task_id),
             )
         # 新上报节点自动取消存档，重新出现在运行列表
         conn.execute(
