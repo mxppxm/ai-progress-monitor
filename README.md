@@ -1,5 +1,7 @@
 # AI 工作台进度监控平台 (ai-progress-monitor)
 
+> 🙋 **拷贝话术**：想接入新工作台时，把下方「话术」直接粘贴给那个 AI 即可；想接入的 AI 是 Codex/Claude/Clacky，可改用「自动配置」。详见文末「一键接入」。
+
 统一监控多个 AI 工作台（Codex / Cursor / Claude Code / OpenCode 等）的任务进度。
 各工作台通过 **MCP 协议**上报任务与关键节点，你在一个**网页看板**上实时查看，
 关键节点（里程碑/成功/失败）自动弹出 **macOS 系统通知**横幅。
@@ -16,6 +18,25 @@ OpenCode┘                                                  │
                                                       │  localhost:8777   │
                                                       └───────────────────┘
 ```
+
+## 🪄 直接粘贴的话术
+
+> 用在**任意 AI 工作台**（Codex / Cursor / Claude / OpenCode / Clacky …）。只要那个工作台已挂载本 MCP（工具：`record_task`、`update_progress`、`log_node`、`list_tasks`），把下面这段整段粘贴给它即可，它会从此**每个会话自动上报**：
+
+```
+从现在起，请在每个会话中自动通过 ai-progress-monitor MCP 上报你的任务进度，
+无需我每次提醒。规则如下：
+1. 会话开始、或接手一个长任务时：调用 record_task
+   （task_id=你所属工作台名-短序号，agent=你所属工作台名，name=任务名，stage=starting）
+2. 推进到新阶段或进度变化时：调用 update_progress（progress=0-100，stage=coding/testing/deploying 等）
+3. 到达重要节点时：调用 log_node（node_type=step 或 milestone，message=简短中文描述）
+4. 任务完成：调用 log_node（node_type=success）；失败：调用 log_node（node_type=failed）
+   注：milestone / success / fail 会自动触发系统通知并更新任务状态。
+判断标准：不要等我要求才上报，做了实质工作就自动上报。
+若 MCP 工具暂时不可用，静默跳过，不要阻塞主任务。
+```
+
+---
 
 ## 功能
 - **MCP 上报**：`record_task` / `update_progress` / `log_node` / `list_tasks` 四个工具
