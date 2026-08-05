@@ -7,6 +7,7 @@
 
   let tasks = [];
   let filter = "all";
+  let showArchived = false;   // 是否查看已存档任务
   let nodesCache = {};
   const POLL_INTERVAL = 5000;   // 兜底轮询周期（ms）
   let lastSSEMsgAt = Date.now();
@@ -66,9 +67,14 @@
 
   function render(list) {
     tasks = list || [];
-    countEl.textContent = `${tasks.length} 个任务`;
-    const visible = tasks.filter(t => filter === "all" || t.status === filter);
+    // 默认隐藏已存档；showArchived 时连存档一起显示
+    const activeTasks = tasks.filter(t => !t.archived);
+    const visible = (showArchived ? tasks : activeTasks)
+      .filter(t => filter === "all" || t.status === filter);
+    countEl.textContent = `${visible.length} 个任务`;
     grid.innerHTML = visible.map(cardHTML).join("");
+    document.getElementById("archived-count").textContent =
+      `已存档 ${tasks.reduce((n, t) => n + (t.archived ? 1 : 0), 0)}`;
     empty.classList.toggle("hidden", visible.length > 0);
   }
 
@@ -76,11 +82,15 @@
     const aclass = ["codex","cursor","claude","opencode"].includes(t.agent) ? `agent-${t.agent}` : "agent-default";
     const status = STATUS_LABEL[t.status] || t.status;
     const fillClass = t.status === "failed" ? " failed" : t.status === "done" ? " done" : "";
+    const archClass = t.archived ? " archived" : "";
+    const archBtn = t.archived
+      ? `<button class="arch-btn" data-arch="${escapeAttr(t.task_id)}" title="恢复到运行列表">↺ 恢复</button>`
+      : `<button class="arch-btn" data-arch="${escapeAttr(t.task_id)}" title="存档，从运行列表隐藏">🗂 存档</button>`;
     return `
-      <div class="card" data-id="${escapeAttr(t.task_id)}">
+      <div class="card${archClass}" data-id="${escapeAttr(t.task_id)}">
         <div class="card-head">
           <span class="agent-tag ${aclass}">${escapeHtml(t.agent)}</span>
-          <span class="status ${t.status}">${status}</span>
+          <span class="status ${t.status}">${status}${t.archived ? " · 已存档" : ""}</span>
         </div>
         <div class="card-title">${escapeHtml(t.name)}</div>
         <div class="card-detail">${escapeHtml(t.detail || "")}</div>
@@ -90,7 +100,7 @@
         </div>
         <div class="card-foot">
           <span class="updated">更新于 ${ftime(t.updated_at)}</span>
-          <span>${t.progress}%</span>
+          <span class="foot-right">${archBtn}<span>${t.progress}%</span></span>
         </div>
       </div>`;
   }
@@ -128,11 +138,39 @@
     });
   });
 
-  // 卡片点击 → 节点详情
-  grid.addEventListener("click", (e) => {
+  // 已存档开关
+  document.getElementById("arch-toggle").addEventListener("click", () => {
+    showArchived = !showArchived;
+    document.getElementById("arch-toggle").classList.toggle("active", showArchived);
+    render(tasks);
+  });
+
+  // 卡片点击 → 节点详情；但存档/恢复按钮不触发（用冒泡判断）
+  grid.addEventListener("click", async (e) => {
+    const archBtn = e.target.closest(".arch-btn");
+    if (archBtn) {
+      e.stopPropagation();
+      const id = archBtn.dataset.arch;
+      const isRestore = archBtn.textContent.includes("恢复");
+      try {
+        const r = await fetch(`/api/tasks/${encodeURIComponent(id)}/${isRestore ? "unarchive" : "archive"}`, { method: "POST" });
+        if (r.ok) {
+          // 后端 _publish 已广播 SSE；这里再本地重拉一次兜底即时刷新
+          refreshFromServer();
+        }
+      } catch (_) {}
+      return;
+    }
     const card = e.target.closest(".card");
     if (card) openModal(card.dataset.id);
   });
+
+  function refreshFromServer() {
+    fetch("/api/tasks").then(r => r.json()).then(j => {
+      render(j.tasks || []);
+      lastSSEMsgAt = Date.now();
+    }).catch(_ => {});
+  }
 
   // ── utils ──
   function escapeHtml(s) {

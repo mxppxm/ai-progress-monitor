@@ -15,9 +15,9 @@ import time
 from pathlib import Path
 
 import uvicorn
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 import db
@@ -39,7 +39,8 @@ _subscribers: set[asyncio.Queue] = set()
 
 
 def _publish():
-    data = json.dumps({"tasks": db.list_tasks()}, ensure_ascii=False)
+    # 全量发给前端（含已存档），由前端决定显示哪些
+    data = json.dumps({"tasks": db.list_tasks(include_archived=True)}, ensure_ascii=False)
     for q in list(_subscribers):
         try:
             q.put_nowait(data)
@@ -53,8 +54,26 @@ def index():
 
 
 @app.get("/api/tasks")
-def tasks_api():
-    return {"tasks": db.list_tasks()}
+def tasks_api(include_archived: bool = False):
+    return {"tasks": db.list_tasks(include_archived=include_archived), "archived": db.count_archived()}
+
+
+@app.post("/api/tasks/{task_id}/archive")
+def archive_api(task_id: str):
+    t = db.archive_task(task_id)
+    if t is None:
+        raise HTTPException(status_code=404, detail="task not found")
+    _publish()
+    return {"ok": True, "task": t}
+
+
+@app.post("/api/tasks/{task_id}/unarchive")
+def unarchive_api(task_id: str):
+    t = db.unarchive_task(task_id)
+    if t is None:
+        raise HTTPException(status_code=404, detail="task not found")
+    _publish()
+    return {"ok": True, "task": t}
 
 
 @app.get("/api/tasks/{task_id}/nodes")
@@ -71,7 +90,7 @@ async def stream():
     async def gen():
         try:
             # 首次全量
-            initial = json.dumps({"tasks": db.list_tasks()}, ensure_ascii=False)
+            initial = json.dumps({"tasks": db.list_tasks(include_archived=True)}, ensure_ascii=False)
             yield f"data: {initial}\n\n"
             idle = 0
             while True:

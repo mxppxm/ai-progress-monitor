@@ -116,6 +116,23 @@ body {
 .empty { color: var(--muted); text-align: center; padding: 60px 20px; }
 .hidden { display: none !important; }
 
+/* ── 存档功能 ── */
+.arch-toggle { margin-left: auto; }
+.arch-toggle.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+#archived-count { font-variant-numeric: tabular-nums; }
+
+.arch-btn {
+  background: transparent; color: var(--muted); border: 1px solid var(--border);
+  border-radius: 6px; padding: 3px 8px; font-size: 11px; cursor: pointer;
+  transition: all .15s; margin-right: 6px;
+}
+.arch-btn:hover { color: var(--text); border-color: var(--accent); }
+.arch-btn:active { transform: scale(.95); }
+
+.card.archived { opacity: .72; border-style: dashed; }
+.card.archived .card-title, .card.archived .card-detail, .card.archived .stage { color: var(--muted); }
+.foot-right { display: flex; align-items: center; }
+
 /* ── modal / timeline ── */
 .modal {
   position: fixed; inset: 0; background: rgba(0,0,0,.6);

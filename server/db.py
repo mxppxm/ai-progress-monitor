@@ -39,6 +39,7 @@ def init_db() -> None:
                 progress   INTEGER NOT NULL DEFAULT 0,       -- 0-100
                 stage      TEXT NOT NULL DEFAULT 'started',  -- 当前阶段
                 detail     TEXT DEFAULT '',                  -- 补充描述
+                archived   INTEGER NOT NULL DEFAULT 0,        -- 1=已存档（从运行列表隐藏）
                 started_at REAL NOT NULL,
                 updated_at REAL NOT NULL
             );
@@ -55,16 +56,25 @@ def init_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_nodes_task ON nodes(task_id, ts);
             """
         )
+        # 迁移：老库补 archived 列
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(tasks)").fetchall()]
+        if "archived" not in cols:
+            conn.execute("ALTER TABLE tasks ADD COLUMN archived INTEGER NOT NULL DEFAULT 0")
 
 
 def record_task(task_id: str, agent: str, name: str) -> dict:
-    """注册或复用一条任务。若已存在则视为复用，不改状态。"""
+    """注册或复用一条任务。若已存在则视为复用；新上报自动取消存档。"""
     now = time.time()
     with _LOCK, _connect() as conn:
         conn.execute(
-            """INSERT OR IGNORE INTO tasks (task_id, agent, name, status, progress, stage, detail, started_at, updated_at)
-               VALUES (?, ?, ?, 'running', 0, 'started', '', ?, ?)""",
+            """INSERT OR IGNORE INTO tasks (task_id, agent, name, status, progress, stage, detail, archived, started_at, updated_at)
+               VALUES (?, ?, ?, 'running', 0, 'started', '', 0, ?, ?)""",
             (task_id, agent, name, now, now),
+        )
+        # 复用已存在（含已存档）任务 → 新上报自动取消存档，重新显示
+        conn.execute(
+            "UPDATE tasks SET archived=0, updated_at=? WHERE task_id=?",
+            (now, task_id),
         )
         row = conn.execute("SELECT * FROM tasks WHERE task_id=?", (task_id,)).fetchone()
         return dict(row)
@@ -92,6 +102,8 @@ def update_progress(task_id: str, progress: int | None = None, stage: str | None
     now = time.time()
     updates.append("updated_at=?")
     params.append(now)
+    # 新上报自动取消存档，重新出现在运行列表（常量，无占位符）
+    updates.append("archived=0")
     params.append(task_id)
 
     with _LOCK, _connect() as conn:
@@ -123,7 +135,40 @@ def log_node(task_id: str, node_type: str, message: str, meta: dict | None = Non
                 "UPDATE tasks SET status=?, updated_at=?, progress=? WHERE task_id=?",
                 (st, now, 100 if st == "done" else 0, task_id),
             )
+        # 新上报节点自动取消存档，重新出现在运行列表
+        conn.execute(
+            "UPDATE tasks SET archived=0 WHERE task_id=?",
+            (task_id,),
+        )
     return get_task(task_id)
+
+
+def archive_task(task_id: str) -> dict | None:
+    """把任务标记为已存档，从运行/默认列表隐藏（保留历史）。"""
+    now = time.time()
+    with _LOCK, _connect() as conn:
+        cur = conn.execute(
+            "UPDATE tasks SET archived=1, updated_at=? WHERE task_id=?",
+            (now, task_id),
+        )
+        if cur.rowcount == 0:
+            return None
+        row = conn.execute("SELECT * FROM tasks WHERE task_id=?", (task_id,)).fetchone()
+        return dict(row)
+
+
+def unarchive_task(task_id: str) -> dict | None:
+    """取消存档，让它重新显示。"""
+    now = time.time()
+    with _LOCK, _connect() as conn:
+        cur = conn.execute(
+            "UPDATE tasks SET archived=0, updated_at=? WHERE task_id=?",
+            (now, task_id),
+        )
+        if cur.rowcount == 0:
+            return None
+        row = conn.execute("SELECT * FROM tasks WHERE task_id=?", (task_id,)).fetchone()
+        return dict(row)
 
 
 def get_task(task_id: str) -> dict | None:
@@ -132,11 +177,26 @@ def get_task(task_id: str) -> dict | None:
         return dict(row) if row else None
 
 
-def list_tasks(limit: int = 50) -> list[dict]:
-    """按更新时间倒序返回任务列表。"""
+def list_tasks(limit: int = 50, include_archived: bool = False) -> list[dict]:
+    """按更新时间倒序返回任务列表。默认隐藏已存档；include_archived=True 时全量返回。"""
     with _LOCK, _connect() as conn:
-        rows = conn.execute("SELECT * FROM tasks ORDER BY updated_at DESC LIMIT ?", (limit,)).fetchall()
+        if include_archived:
+            rows = conn.execute(
+                "SELECT * FROM tasks ORDER BY updated_at DESC LIMIT ?", (limit,)
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM tasks WHERE archived=0 ORDER BY updated_at DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
     return [dict(r) for r in rows]
+
+
+def count_archived() -> int:
+    """已存档任务数（用于前端显示）。"""
+    with _LOCK, _connect() as conn:
+        row = conn.execute("SELECT COUNT(*) AS c FROM tasks WHERE archived=1").fetchone()
+        return row["c"] if row else 0
 
 
 def list_nodes(task_id: str, limit: int = 100) -> list[dict]:
