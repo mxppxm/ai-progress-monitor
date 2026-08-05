@@ -1,6 +1,6 @@
 # AI 工作台进度监控平台 (ai-progress-monitor)
 
-> 🙋 **拷贝话术**：想接入新工作台时，把下方「话术」直接粘贴给那个 AI 即可；想接入的 AI 是 Codex/Claude/Clacky，可改用「自动配置」。详见文末「一键接入」。
+> 🙋 **拷贝话术**：想接入新工作台时，按下方「第一步·安装 MCP」把 server 挂到那个 AI 上，再按「第二步·上报规则」让它开始上报即可；想接入的 AI 是 Codex/Claude/Clacky，也可改用文末「一键接入」自动配置。
 
 统一监控多个 AI 工作台（Codex / Cursor / Claude Code / OpenCode 等）的任务进度。
 各工作台通过 **MCP 协议**上报任务与关键节点，你在一个**网页看板**上实时查看，
@@ -20,6 +20,31 @@ OpenCode┘                                                  │
 ```
 
 ## 🪄 直接粘贴的话术
+
+### 第一步 · 安装 MCP
+
+> 粘贴给**你想接入的新工作台**，让那个 AI 自己按它所在的工作台方式，把本项目的 MCP server 挂到自己的配置上：
+
+```
+请帮我把 ai-progress-monitor 这个 MCP server 安装/挂载到你当前所在的工作台，
+配置完成后确认 record_task / update_progress / log_node / list_tasks 四个工具已加载。
+
+仓库根目录：/Users/mico/clacky_workspace/ai-progress-monitor
+MCP（stdio）启动方式：
+  command = /Users/mico/clacky_workspace/ai-progress-monitor/.venv/bin/python
+  args    = ["/Users/mico/clacky_workspace/ai-progress-monitor/server/mcp_server.py"]
+  description = "AI 工作台进度监控 — record_task/update_progress/log_node/list_tasks"
+
+请根据你所在的工作台选择对应的配置方式：
+- Codex：执行  codex mcp add ai-progress-monitor -- <command> <args...>
+- Cursor：往  ~/.cursor/mcp.json 的 mcpServers 里写入 ai-progress-monitor 条目
+- Claude Code：执行  claude mcp add ai-progress-monitor --scope user -- <command> <args...>
+- OpenCode：往  opencode.json 的 mcp 里写入 ai-progress-monitor 条目
+如果该工作台有官方的一键配置机制，也可以改用仓库里的 scripts/setup_agents.py 自动完成。
+若配置已存在，不要重复添加；完成后告诉我工具是否已可用。
+```
+
+### 第二步 · 上报规则
 
 > 用在**任意 AI 工作台**（Codex / Cursor / Claude / OpenCode / Clacky …）。只要那个工作台已挂载本 MCP（工具：`record_task`、`update_progress`、`log_node`、`list_tasks`），把下面这段整段粘贴给它即可，它会从此**每个会话自动上报**：
 
