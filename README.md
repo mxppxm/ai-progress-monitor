@@ -19,7 +19,9 @@ OpenCode┘                                                  │
 
 ## 功能
 - **MCP 上报**：`record_task` / `update_progress` / `log_node` / `list_tasks` 四个工具
-- **实时看板**：SSE 秒级刷新，按状态筛选，卡片展示进度条
+- **实时看板**：SSE 秒级刷新（带心跳保活），断线自动切前端兜底轮询，无需手动刷新
+- **一键接入**：`setup_agents.py` 自动给各工作台配好 MCP
+- **开机自启**：LaunchAgent 开机拉起 + 崩溃自愈
 - **节点时间线**：点击任务卡片查看其完整执行节点记录
 - **系统通知**：`milestone` / `success` / `fail` 节点触发 macOS 横幅通知
 
@@ -44,7 +46,25 @@ cd ai-progress-monitor
 ```
 浏览器打开 http://127.0.0.1:8777
 
-### 3. 接入工作台
+### 3. 一键自动配置各工作台 MCP
+```bash
+.venv/bin/python scripts/setup_agents.py     # 探测并配置所有已安装工作台
+.venv/bin/python scripts/setup_agents.py --report   # 只查看安装/配置状态
+.venv/bin/python scripts/setup_agents.py --codex --cursor --claude  # 只配指定的工作台
+```
+自动识别 **codex / cursor / claude / opencode**，逐个写入对应 MCP 配置
+（`.codex/mcp.json`、`.cursor/mcp.json`、`claude mcp add`、`opencode.json`），
+幂等执行、不重复写入。
+
+### 4. macOS 开机自启（可选）
+```bash
+cp scripts/com.mxppxm.ai-progress-monitor.plist ~/Library/LaunchAgents/
+launchctl load -w ~/Library/LaunchAgents/com.mxppxm.ai-progress-monitor.plist
+```
+启动即托；`KeepAlive` 让服务崩溃后自动拉起。`scripts/run_dashboard.sh`
+负责杀掉旧进程并重启。
+
+### 5. 接入工作台
 见 `client-configs/` 下各文件的截图式配置，替换其中 `/path/to/ai-progress-monitor` 为你的实际路径。
 
 ## 工作台上报约定（写给 AI 的通用指令）
@@ -63,8 +83,13 @@ server/
 dashboard/
   index.html      看板页面
   styles.css
-  app.js          实时逻辑
+  app.js          实时逻辑（SSE + 兜底轮询）
 client-configs/   Codex/Cursor/Claude/OpenCode 接入说明
+scripts/
+  setup_agents.py           一键自动配置各工作台 MCP
+  run_dashboard.sh          看板启动辅助脚本
+  com.mxppxm...plist        macOS launchd 自启配置模板
+  sse_live_test.py          SSE 实时推送端到端验证脚本
 data/             SQLite 数据库（自动生成）
 ```
 
