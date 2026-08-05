@@ -8,17 +8,50 @@
   let tasks = [];
   let filter = "all";
   let nodesCache = {};
+  const POLL_INTERVAL = 5000;   // 兜底轮询周期（ms）
+  let lastSSEMsgAt = Date.now();
+  let pollTimer = null;
+  let usingPoll = false;
+
+  // ── 兜底轮询：SSE 失联时自动接管，保证无需刷新 ──
+  async function poll() {
+    try {
+      const r = await fetch("/api/tasks");
+      const j = await r.json();
+      render(j.tasks);
+      badge.textContent = "轮询兜底";
+      badge.classList.add("poll");
+      usingPoll = true;
+    } catch (_) {}
+  }
+
+  function schedulePoll() {
+    if (pollTimer) clearInterval(pollTimer);
+    pollTimer = setInterval(() => {
+      // 若超过阈值没收到 SSE 消息（含心跳），切换到轮询
+      if (Date.now() - lastSSEMsgAt > POLL_INTERVAL * 2) { poll(); }
+    }, POLL_INTERVAL);
+  }
 
   const STATUS_LABEL = { running: "运行中", done: "已完成", failed: "失败", paused: "暂停" };
 
   // ── event source (SSE) ──
   function connectSSE() {
     const es = new EventSource("/api/stream");
-    es.onopen = () => { badge.textContent = "实时连接"; badge.classList.add("on"); };
+    es.onopen = () => {
+      badge.textContent = "实时连接"; badge.classList.add("on"); badge.classList.remove("poll");
+      usingPoll = false;
+    };
     es.onmessage = (e) => {
+      lastSSEMsgAt = Date.now();
+      usingPoll = false;
+      badge.textContent = "实时连接"; badge.classList.add("on"); badge.classList.remove("poll");
       try { render(JSON.parse(e.data).tasks); } catch (_) {}
     };
-    es.onerror = () => { badge.textContent = "已断开"; badge.classList.remove("on"); };
+    es.onerror = () => {
+      // EventSource 会自动重连；期间由兜底轮询兜着
+      badge.textContent = "重连中…"; badge.classList.remove("on");
+    };
   }
 
   async function loadNodes(taskId) {
@@ -114,6 +147,7 @@
   }
 
   // ├── boot ──
-  fetch("/api/tasks").then(r => r.json()).then(j => render(j.tasks)).catch(_ => render([]));
+  fetch("/api/tasks").then(r => r.json()).then(j => { render(j.tasks); lastSSEMsgAt = Date.now(); }).catch(_ => render([]));
   connectSSE();
+  schedulePoll();
 })();

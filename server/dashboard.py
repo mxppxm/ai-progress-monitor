@@ -73,9 +73,17 @@ async def stream():
             # 首次全量
             initial = json.dumps({"tasks": db.list_tasks()}, ensure_ascii=False)
             yield f"data: {initial}\n\n"
+            idle = 0
             while True:
-                data = await queue.get()
-                yield f"data: {data}\n\n"
+                try:
+                    data = queue.get_nowait()
+                    idle = 0
+                    yield f"data: {data}\n\n"
+                except asyncio.QueueEmpty:
+                    await asyncio.sleep(3)
+                    idle += 3
+                    # 心跳注释，保持连接活跃并让前端知道还连着
+                    yield ": ping\n\n"
         except asyncio.CancelledError:
             pass
         finally:
