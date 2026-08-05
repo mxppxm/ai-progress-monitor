@@ -33,6 +33,12 @@ jq '.hooks = (input.hooks)' \
 > 会自动读 stdin 里的 hook JSON（`hook_event_name`/`session_id`/`cwd`…），
 > 生成稳定的 task_id 并写入同一个 SQLite 看板。
 
+也可复制 README 短话术：
+
+```
+请根据 <repo>/install/hooks.md，安装 hooks。
+```
+
 ## 方式二：MCP（兜底）
 
 Claude Code 通过 `claude mcp add` 命令注册 stdio MCP server。

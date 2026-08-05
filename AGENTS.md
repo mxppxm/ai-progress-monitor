@@ -1,69 +1,26 @@
-# AGENTS.md — AI 接入说明（请整份执行）
+# AGENTS.md — AI 接入说明
 
-> 人类对你说「接入进度监控」时：**读本文件并立刻执行**，不要再去翻长 README。
+> 人类说「接入进度监控」或给出 `install/*.md` 链接时：**读对应文档并立刻执行**。
+>
+> - Hooks（推荐）：[`install/hooks.md`](./install/hooks.md)
+> - MCP（兜底）：[`install/mcp.md`](./install/mcp.md)
 
 本仓库路径记为 `REPO`（本文件所在目录的绝对路径）。
 
 **优先 Hooks，MCP 仅作兜底。** Cursor / Claude / Codex 用 Hooks；OpenCode 或 hooks 不可用时再走 MCP。
 
----
+人类侧短话术（复制即可）：
 
-## A. Hooks 安装（Cursor / Claude / Codex · 立刻做）
-
-### Cursor
-
-1. 把 `REPO/client-configs/cursor-hooks.json` 合并进 `~/.cursor/hooks.json`（替换其中 `<repo_root>` → `REPO`）
-2. `chmod +x REPO/client-configs/cursor-hook.sh`
-3. **删除**本机对 MCP 的依赖（若有）：
-   - 从 `~/.cursor/mcp.json` 去掉 `ai-progress-monitor`
-   - 删除要求调用 `record_task` 等的 Cursor rule（如 `~/.cursor/rules/ai-progress-monitor.mdc`）
-4. 在 Settings → Hooks 确认已加载；必要时重启 Cursor
-
-语义：点发送建/重启任务（标题＝本轮提示词）；停输出＝结束；回复含「需要你选择 / 你来决定」＝黄灯；空会话不建任务。
-
-### Claude Code
-
-合并 `REPO/client-configs/claude-hooks.json` → `~/.claude/settings.json`（替换 `<repo_root>`）。
-
-### Codex
-
-1. 把 `REPO/client-configs/codex-hooks.json` 写成 `~/.codex/hooks.json`（替换 `<repo_root>` → `REPO`）
-2. `~/.codex/config.toml` 确保 `[features] hooks = true`
-3. 在 Codex 执行 `/hooks` 信任新 hooks；必要时重启
-
-语义：`UserPromptSubmit` 建/重启（标题＝本轮提示词）；`SessionStart` 只注入黄灯提示；`Stop`＝结束/黄灯；空会话不建任务。
-
-也可让人类把 README「Codex 一键接入」整段 prompt 贴进 Codex 自动安装。
-
-Hooks 生效后**不要**再写「请自觉调 MCP」类规则。
-
----
-
-## B. MCP 安装（兜底 · 立刻做）
-
-```bash
-cd REPO
-# 若无 .venv：
-#   python3 -m venv .venv && .venv/bin/pip install "mcp[cli]" fastmcp fastapi uvicorn
-.venv/bin/python scripts/setup_agents.py
+```
+请根据 REPO/install/hooks.md，安装 hooks。
+请根据 REPO/install/mcp.md，安装 mcp。
 ```
 
-只配当前工作台时加：`--cursor` / `--codex` / `--claude` / `--opencode`。
+或：
 
-确认工具：`record_task` · `update_progress` · `log_node` · `list_tasks`。已存在则跳过。
+```
+请根据 https://raw.githubusercontent.com/mxppxm/ai-progress-monitor/main/install/hooks.md，安装 hooks。
+请根据 https://raw.githubusercontent.com/mxppxm/ai-progress-monitor/main/install/mcp.md，安装 mcp。
+```
 
-然后把下面 **「MCP 上报协议」** 写入长期规则（Cursor rules / CLAUDE.md / AGENTS.md），勿重复堆叠。
-
----
-
-## C. MCP 上报协议（仅 MCP 方式需要）
-
-本会话已挂载 `ai-progress-monitor` MCP。做实质工作就自动上报；工具不可用则静默跳过。
-
-1. **开长任务** → `record_task`（`task_id`=`工作台名-短序号`，`agent`=工作台名，`name`=任务名）
-2. **换阶段** → `update_progress`（`stage`=coding/testing/…，`progress`=0–100）
-3. **重要节点** → `log_node`（`node_type`=`step`|`milestone`，`message`=中文简述）
-4. **需人类拍板** → `log_node`，`message` 含「需要选择 / 请你选 / 你来决定」→ 看板黄灯
-5. **完成** → `log_node` `success`；**失败** → `fail`
-
-写完后一句话告诉人类：用的 Hooks 还是 MCP、改了哪些文件。
+装完后一句话告诉人类：用的 Hooks 还是 MCP、改了哪些文件。

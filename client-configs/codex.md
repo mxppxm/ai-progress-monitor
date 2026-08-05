@@ -27,7 +27,13 @@ hooks = true
 
 核心命令：`<repo_root>/.venv/bin/python <repo_root>/scripts/hook_report.py --agent codex`
 
-也可直接把 README 里「Codex 一键接入」整段 prompt 粘贴给 Codex，让它自动写好上述文件。
+也可直接把 README 里的短话术发给 Codex：
+
+```
+请根据 <repo>/install/hooks.md，安装 hooks。
+```
+
+（或 GitHub raw：`https://raw.githubusercontent.com/mxppxm/ai-progress-monitor/main/install/hooks.md`）
 
 ## 方式二：MCP（兜底）
 

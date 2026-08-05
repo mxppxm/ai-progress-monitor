@@ -24,6 +24,12 @@
 
 核心命令：`<repo_root>/scripts/hook_report.py --agent cursor`（由 `cursor-hook.sh` 包装）。
 
+也可复制 README 短话术：
+
+```
+请根据 <repo>/install/hooks.md，安装 hooks。
+```
+
 ## 方式二：MCP（兜底）
 
 不适合 hooks 时再用。写入 `~/.cursor/mcp.json`：
