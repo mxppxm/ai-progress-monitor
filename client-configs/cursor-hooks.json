@@ -1,6 +1,11 @@
 {
   "version": 1,
   "hooks": {
+    "sessionStart": [
+      {
+        "command": "<repo_root>/client-configs/cursor-hook.sh"
+      }
+    ],
     "beforeSubmitPrompt": [
       {
         "command": "<repo_root>/client-configs/cursor-hook.sh"
@@ -10,6 +15,11 @@
       {
         "command": "<repo_root>/client-configs/cursor-hook.sh",
         "matcher": "Shell|Write|EditNotebook|Delete|Task"
+      }
+    ],
+    "afterAgentResponse": [
+      {
+        "command": "<repo_root>/client-configs/cursor-hook.sh"
       }
     ],
     "stop": [

@@ -19,6 +19,8 @@
    - 删除要求调用 `record_task` 等的 Cursor rule（如 `~/.cursor/rules/ai-progress-monitor.mdc`）
 4. 在 Settings → Hooks 确认已加载；必要时重启 Cursor
 
+语义：点发送建/重启任务；停输出＝结束；回复含「需要你选择 / 你来决定」＝黄灯；空会话不建任务。
+
 ### Claude Code
 
 合并 `REPO/client-configs/claude-hooks.json` → `~/.claude/settings.json`（替换 `<repo_root>`）。

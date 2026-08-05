@@ -15,10 +15,12 @@
 
 | Cursor 事件 | 上报动作 |
 | :---------- | :------- |
-| `beforeSubmitPrompt` | 用户点发送、开始执行时 `record_task`（新建空会话不触发） |
+| `sessionStart` | 注入黄灯用语提示（不建任务） |
+| `beforeSubmitPrompt` | 用户点发送 → `record_task` / 重启为 running |
 | `postToolUse`（Shell/Write/…） | 心跳 `step` |
-| `stop` | `milestone` |
-| `sessionEnd` | 任务置为 `paused` |
+| `afterAgentResponse` | 末条含「需要你选择 / 你来决定」等 → 黄灯 pending |
+| `stop` | 停止输出 → `success`（已结束）；已黄灯则保持 pending |
+| `sessionEnd` | 仍 running 则结束；已结束/待选择不变 |
 
 核心命令：`<repo_root>/scripts/hook_report.py --agent cursor`（由 `cursor-hook.sh` 包装）。
 

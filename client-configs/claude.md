@@ -8,10 +8,10 @@ Claude Code 原生支持生命周期 hooks，把这些事件自动上报到看�
 
 | 事件 | 上报动作 |
 | :--- | :------- |
-| `SessionStart` | 自动 `record_task` |
+| `SessionStart` | 自动 `record_task` / 继续对话时重启为 running |
 | `PostToolUse`  | Bash/Write/Edit 每次成功后自动心跳 `step` |
-| `Stop` | 每轮结束自动把收尾消息记成 `milestone` |
-| `SessionEnd` | 会话结束自动把任务置为 `paused` |
+| `Stop` | 停止输出 → `success`（已结束）；末条含拍板用语 → 黄灯 pending |
+| `SessionEnd` | 仍 running 则结束；已结束/待选择不变 |
 
 ### 配置
 
