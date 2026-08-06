@@ -13,14 +13,19 @@ cp <repo_root>/client-configs/opencode-plugin.js ~/.config/opencode/plugins/ai-p
 
 插件订阅 opencode 事件并调用 `scripts/hook_report.py --agent opencode`，语义与 hooks 一致：
 
-| opencode 事件 | hook_report 事件 | 看板动作 |
+| 插件钩子 | hook_report 事件 | 看板动作 |
 | :--- | :--- | :--- |
-| `message.updated`（role=user） | `SessionStart` | 建/重启任务，标题=提示词 |
-| `tool.execute.after`（实质工具） | `PostToolUse` | step 心跳 |
-| `session.status` = idle | `Stop` | 结束/黄灯 |
-| `session.deleted` | `SessionEnd` | 收尾 |
+| `chat.message`（用户提示词） | `SessionStart` | 建/重启任务，标题=提示词 |
+| `tool.execute.after` | `PostToolUse` | step 心跳 |
+| `event` → `session.status` idle / `session.idle` | `Stop` | 结束/黄灯 |
+| `event` → `session.deleted` | `SessionEnd` | 收尾 |
 
-**重启 OpenCode 后生效**；已运行会话不回补历史，下次会话自动上报。
+> 注意：`message.updated` / `session.*` 属于 **Event**，必须挂在统一的 `event` 钩子上；
+> 旧版把它们写成顶层 Hooks key 会被静默忽略（FreeCode 报不上来的常见原因）。
+
+**重启 OpenCode / FreeCode 后生效**；已运行会话不回补历史，下次会话自动上报。
+
+排障：看 `~/Library/Logs/ai-progress-monitor/opencode-plugin.log`（插件加载与每次上报会写一行）。
 
 插件内硬编码了仓库绝对路径，换机器/换路径需同步改插件里的 `PY` / `SCRIPT` 常量。
 

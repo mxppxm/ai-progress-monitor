@@ -74,9 +74,9 @@ def log_node(task_id: str, node_type: str, message: str, meta: dict | None = Non
     task = db.get_task(task_id)
     # 命中「需要用户选择」→ 任务进待选择(黄灯)，发黄灯提醒通知
     if db.is_choice_message(message):
-        notify.notify_choice(task["agent"], task["name"], message)
+        notify.notify_choice(task["agent"], task["name"], message, task_id=task_id)
     else:
-        notify.notify_node(task["agent"], task["name"], node_type, message)
+        notify.notify_node(task["agent"], task["name"], node_type, message, task_id=task_id)
     return {"ok": True, "task": result, "node_type": node_type}
 
 

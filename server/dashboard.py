@@ -2,7 +2,7 @@
 
 提供：
   GET /           看板前端页面
-  GET /api/tasks  拉取当前任务列表（JSON）
+  GET /api/tasks  拉取当前任务列表（JSON，含已注册 agents）
   GET /api/tasks/{id}/nodes  拉取某个任务的节点时间线
   POST /api/tasks/{id}/end   手动结束任务
   POST /api/tasks/clear      一键清空（永久删除全部任务）
@@ -42,8 +42,15 @@ db.init_db()
 _subscribers: set[asyncio.Queue] = set()
 
 
+def _snapshot() -> str:
+    return json.dumps(
+        {"tasks": db.list_tasks(), "agents": focus.registered_agents()},
+        ensure_ascii=False,
+    )
+
+
 def _publish():
-    data = json.dumps({"tasks": db.list_tasks()}, ensure_ascii=False)
+    data = _snapshot()
     for q in list(_subscribers):
         try:
             q.put_nowait(data)
@@ -58,7 +65,7 @@ def index():
 
 @app.get("/api/tasks")
 def tasks_api():
-    return {"tasks": db.list_tasks()}
+    return {"tasks": db.list_tasks(), "agents": focus.registered_agents()}
 
 
 @app.post("/api/tasks/{task_id}/end")
@@ -104,10 +111,10 @@ def task_nodes(task_id: str, limit: int = 100):
     return {"nodes": db.list_nodes(task_id, limit)}
 
 
-@app.post("/api/focus/{agent}")
-def focus_api(agent: str):
-    """点击看板任务：把对应工作台 App 拉到前台。"""
-    result = focus.focus_agent(agent)
+@app.api_route("/api/focus/{agent}", methods=["GET", "POST"])
+def focus_api(agent: str, task_id: str | None = None):
+    """点击看板/通知：聚焦对应工作台（Clacky 打开 Chrome 会话标签）。"""
+    result = focus.focus_agent(agent, task_id=task_id)
     if not result.get("ok"):
         raise HTTPException(status_code=404, detail=result.get("error") or "focus failed")
     return result
@@ -122,7 +129,7 @@ async def stream():
     async def gen():
         try:
             # 首次全量
-            initial = json.dumps({"tasks": db.list_tasks()}, ensure_ascii=False)
+            initial = _snapshot()
             yield f"data: {initial}\n\n"
             idle = 0
             while True:

@@ -139,7 +139,16 @@ def log_node(task_id: str, node_type: str, message: str, meta: dict | None = Non
     """记录一个关键节点。若任务不存在返回 None。"""
     if node_type not in NODE_TYPES:
         node_type = "step"
+    meta = meta or {}
     now = time.time()
+    detail = (message or "").strip()[:500]
+    # 结束/拍板/停输出类节点：把末条文案写入任务 detail，供看板直接展示
+    write_detail = bool(detail) and (
+        node_type in ("success", "fail")
+        or is_choice_message(message)
+        or meta.get("choice")
+        or meta.get("hook") in ("Stop", "AfterAgentResponse", "SessionEnd")
+    )
     with _LOCK, _connect() as conn:
         # 确保任务存在
         t = conn.execute("SELECT task_id FROM tasks WHERE task_id=?", (task_id,)).fetchone()
@@ -147,26 +156,45 @@ def log_node(task_id: str, node_type: str, message: str, meta: dict | None = Non
             return None
         conn.execute(
             "INSERT INTO nodes (task_id, node_type, message, meta, ts) VALUES (?,?,?,?,?)",
-            (task_id, node_type, message, json.dumps(meta or {}, ensure_ascii=False), now),
+            (task_id, node_type, message, json.dumps(meta, ensure_ascii=False), now),
         )
         # success/fail 自动终结任务状态（同时熄灭之前的「待选择」黄灯）
         if node_type in ("success", "fail"):
             st = "done" if node_type == "success" else "failed"
-            conn.execute(
-                "UPDATE tasks SET status=?, updated_at=?, progress=? WHERE task_id=?",
-                (st, now, 100 if st == "done" else 0, task_id),
-            )
+            if write_detail:
+                conn.execute(
+                    "UPDATE tasks SET status=?, updated_at=?, progress=?, detail=?, archived=0 WHERE task_id=?",
+                    (st, now, 100 if st == "done" else 0, detail, task_id),
+                )
+            else:
+                conn.execute(
+                    "UPDATE tasks SET status=?, updated_at=?, progress=?, archived=0 WHERE task_id=?",
+                    (st, now, 100 if st == "done" else 0, task_id),
+                )
         # 节点带「需要用户选择」意图 → 标为待选择(黄灯)；仅在非终结节点上生效
-        elif is_choice_message(message):
-            conn.execute(
-                "UPDATE tasks SET status='pending', updated_at=? WHERE task_id=?",
-                (now, task_id),
-            )
-        # 新上报节点自动取消存档，重新出现在运行列表
-        conn.execute(
-            "UPDATE tasks SET archived=0 WHERE task_id=?",
-            (task_id,),
-        )
+        elif is_choice_message(message) or meta.get("choice"):
+            if write_detail:
+                conn.execute(
+                    "UPDATE tasks SET status='pending', updated_at=?, detail=?, archived=0 WHERE task_id=?",
+                    (now, detail, task_id),
+                )
+            else:
+                conn.execute(
+                    "UPDATE tasks SET status='pending', updated_at=?, archived=0 WHERE task_id=?",
+                    (now, task_id),
+                )
+        else:
+            if write_detail:
+                conn.execute(
+                    "UPDATE tasks SET detail=?, updated_at=?, archived=0 WHERE task_id=?",
+                    (detail, now, task_id),
+                )
+            else:
+                # 新上报节点自动取消存档，重新出现在运行列表
+                conn.execute(
+                    "UPDATE tasks SET archived=0 WHERE task_id=?",
+                    (task_id,),
+                )
     return get_task(task_id)
 
 

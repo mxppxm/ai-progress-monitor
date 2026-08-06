@@ -104,9 +104,9 @@ def _notify_after_log(task_id: str, node_type: str, message: str) -> None:
     if not task:
         return
     if db.is_choice_message(message):
-        notify.notify_choice(task["agent"], task["name"], message)
+        notify.notify_choice(task["agent"], task["name"], message, task_id=task_id)
     else:
-        notify.notify_node(task["agent"], task["name"], node_type, message)
+        notify.notify_node(task["agent"], task["name"], node_type, message, task_id=task_id)
 
 
 def _ensure_task(agent: str, event: dict) -> tuple[str, dict | None]:
@@ -148,45 +148,68 @@ def _handle_inject_hint(agent: str, event: dict) -> dict:
 
 
 def _handle_post_tool_use(agent: str, event: dict) -> dict:
-    """工具用完后：记一个 step 心跳节点。"""
+    """工具用完后：记一个 step 心跳节点（不刷 updated_at，避免看板整板重绘打掉 hover）。"""
     task_id = _task_id_for(agent, event)
     name = _task_name_for(agent, event, task_id)
-    # 心跳不改标题（无用户提示词时兜底名会污染看板）
-    db.record_task(task_id, agent, name, update_name=False)
+    existing = db.get_task(task_id)
+    if existing is None:
+        db.record_task(task_id, agent, name, update_name=False)
+    elif existing.get("status") not in ("running", "pending"):
+        # 已结束任务又有工具活动 → 拉回 running
+        db.record_task(task_id, agent, name, update_name=False)
     tool = event.get("tool_name") or "tool"
     msg = f"执行了 {tool}"
-    log = db.log_node(task_id, "step", msg, {"tool": tool})
-    db.bump_version()
+    log = db.log_node(task_id, "step", msg, {"tool": tool, "heartbeat": True})
     if log is None:
         return {"ok": False, "error": "task 不存在"}
+    # 心跳节点不 bump：否则 SSE 高频推送会整板 innerHTML，hover/点击体感迟滞
     return {"ok": True, "task_id": task_id, "action": "log_node", "node_type": "step"}
 
 
 def _handle_after_agent_response(agent: str, event: dict) -> dict:
-    """助手一条消息写完：若含拍板用语 → 黄灯 pending（stop 时会保留）。"""
+    """助手一条消息写完：始终写入 detail（供看板展示末条）；含拍板用语 → 黄灯。"""
     text = _assistant_text(event)
-    if not text or not db.is_choice_message(text):
-        return {"ok": True, "action": "skip", "reason": "no choice keywords"}
+    if not text:
+        return {"ok": True, "action": "skip", "reason": "empty"}
     task_id, _ = _ensure_task(agent, event)
-    msg = text[:200]
-    log = db.log_node(task_id, "step", msg, {"hook": "AfterAgentResponse"})
+    msg = text[:500]
+    if db.is_choice_message(text):
+        log = db.log_node(task_id, "step", msg, {"hook": "AfterAgentResponse", "choice": True})
+        db.bump_version()
+        if log is None:
+            return {"ok": False, "error": "task 不存在"}
+        _notify_after_log(task_id, "step", msg)
+        return {"ok": True, "task_id": task_id, "action": "pending", "node_type": "step"}
+
+    # 非拍板：只更新 detail，不刷节点、不改状态
+    updated = db.update_progress(task_id, detail=msg)
     db.bump_version()
-    if log is None:
+    if updated is None:
         return {"ok": False, "error": "task 不存在"}
-    _notify_after_log(task_id, "step", msg)
-    return {"ok": True, "task_id": task_id, "action": "pending", "node_type": "step"}
+    return {"ok": True, "task_id": task_id, "action": "detail", "detail": msg}
+
+
+def _stop_display_text(event: dict, existing: dict | None) -> str:
+    """Stop 载荷往往没有助手正文；优先用真实 text，否则沿用已有 detail。"""
+    text = _assistant_text(event).strip()
+    if text and not text.startswith("本轮结束"):
+        return text[:500]
+    prev = ((existing or {}).get("detail") or "").strip()
+    if prev and not prev.startswith("本轮结束"):
+        return prev[:500]
+    return ""
 
 
 def _handle_stop(agent: str, event: dict) -> dict:
     """停止输出＝本轮结束：默认 success/done；末条含拍板用语或已 pending → 黄灯。"""
     task_id, existing = _ensure_task(agent, event)
-    text = _assistant_text(event)
     hook_status = (event.get("status") or "").lower()
     was_pending = bool(existing and existing.get("status") == "pending")
+    snippet = _stop_display_text(event, existing)
 
     # 已因 afterAgentResponse 亮黄灯，或本条 stop 自带拍板文案 → 保持/设为 pending
-    if was_pending or db.is_choice_message(text):
-        msg = (text[:200] if text else None) or "等待你选择"
+    if was_pending or db.is_choice_message(snippet):
+        msg = snippet or "等待你选择"
         log = db.log_node(task_id, "step", msg, {"hook": "Stop", "choice": True})
         db.bump_version()
         if log is None:
@@ -196,7 +219,7 @@ def _handle_stop(agent: str, event: dict) -> dict:
         return {"ok": True, "task_id": task_id, "action": "pending", "node_type": "step"}
 
     if hook_status == "error":
-        msg = (text[:200] if text else None) or "本轮出错结束"
+        msg = snippet or "本轮出错结束"
         log = db.log_node(task_id, "fail", msg, {"hook": "Stop", "status": hook_status})
         db.bump_version()
         if log is None:
@@ -204,9 +227,7 @@ def _handle_stop(agent: str, event: dict) -> dict:
         _notify_after_log(task_id, "fail", msg)
         return {"ok": True, "task_id": task_id, "action": "log_node", "node_type": "fail"}
 
-    msg = (text[:200] if text else None) or "本轮结束"
-    if hook_status == "aborted":
-        msg = (text[:200] if text else None) or "本轮已中止"
+    msg = snippet or ("本轮已中止" if hook_status == "aborted" else "本轮结束")
     log = db.log_node(task_id, "success", msg, {"hook": "Stop", "status": hook_status or "completed"})
     db.bump_version()
     if log is None:
@@ -276,9 +297,8 @@ def _normalize_event(event: dict) -> dict:
         roots = out.get("workspace_roots") or []
         if roots:
             out["cwd"] = roots[0]
-    # Cursor stop: status → message 兜底（无正文时）
-    if not out.get("message") and out.get("status") and not out.get("text"):
-        out["message"] = f"本轮结束（{out['status']}）"
+    # 注意：Cursor stop 只有 status、没有助手正文；不要把 status 伪造成 message，
+    # 否则会盖掉 afterAgentResponse 已写入的末条回复。
     return out
 
 

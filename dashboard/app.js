@@ -7,15 +7,16 @@
   const clearBtn = document.getElementById("clear-btn");
 
   let tasks = [];
+  let registeredAgents = [];
+  let lastRenderKey = "";
   const POLL_INTERVAL = 5000;
   let lastSSEMsgAt = Date.now();
 
   const LANE_ORDER_KEY = "apm-lane-order";
 
   const AGENT_META = {
-    codex:    { label: "Codex",    icon: "▣" },
     cursor:   { label: "Cursor",   icon: "✕" },
-    claude:   { label: "Claude",   icon: "◉" },
+    codex:    { label: "Codex",    icon: "▣" },
     opencode: { label: "OpenCode", icon: "◈" },
     clacky:   { label: "Clacky",   icon: "✦" },
   };
@@ -27,7 +28,7 @@
     es.onmessage = (e) => {
       lastSSEMsgAt = Date.now();
       badge.textContent = "● 实时连接"; badge.classList.add("on");
-      try { render(JSON.parse(e.data).tasks); } catch (_) {}
+      try { applyPayload(JSON.parse(e.data)); } catch (_) {}
     };
     es.onerror = () => { badge.textContent = "○ 重连中…"; badge.classList.remove("on"); };
   }
@@ -35,13 +36,18 @@
   async function poll() {
     try {
       const j = await (await fetch("/api/tasks")).json();
-      render(j.tasks);
+      applyPayload(j);
       badge.textContent = "◌ 轮询"; badge.classList.add("poll");
     } catch (_) {}
   }
   setInterval(() => { if (Date.now() - lastSSEMsgAt > POLL_INTERVAL * 2) poll(); }, POLL_INTERVAL);
 
-  // ── 泳道顺序：首次出现顺序固定，新泳道追加到右侧 ──
+  function applyPayload(j) {
+    if (Array.isArray(j?.agents) && j.agents.length) registeredAgents = j.agents;
+    render(j?.tasks);
+  }
+
+  // ── 泳道顺序：用户拖拽顺序优先，新工作台追加到右侧 ──
   function loadLaneOrder() {
     try { return JSON.parse(localStorage.getItem(LANE_ORDER_KEY) || "[]"); }
     catch (_) { return []; }
@@ -49,10 +55,20 @@
   function saveLaneOrder(order) {
     localStorage.setItem(LANE_ORDER_KEY, JSON.stringify(order));
   }
+  function persistLaneDomOrder() {
+    const order = [...board.querySelectorAll(".lane")].map(el => el.dataset.agent).filter(Boolean);
+    if (order.length) saveLaneOrder(order);
+  }
   function orderedAgents(present) {
     const seen = new Set();
     const order = [];
     for (const a of loadLaneOrder()) {
+      if (present.includes(a) && !seen.has(a)) {
+        order.push(a);
+        seen.add(a);
+      }
+    }
+    for (const a of registeredAgents) {
       if (present.includes(a) && !seen.has(a)) {
         order.push(a);
         seen.add(a);
@@ -90,30 +106,53 @@
 
   function render(list) {
     tasks = list || [];
-    empty.classList.toggle("hidden", tasks.length > 0);
-
     const groups = {};
     tasks.forEach(t => { (groups[t.agent] = groups[t.agent] || []).push(t); });
-    const agents = orderedAgents(Object.keys(groups));
 
+    const present = new Set([...registeredAgents, ...Object.keys(groups)]);
+    // 兜底：后端未返回 agents 时仍展示本地已知工作台
+    if (!registeredAgents.length) {
+      Object.keys(AGENT_META).forEach(a => present.add(a));
+    }
+    const agents = orderedAgents([...present]);
+    empty.classList.toggle("hidden", agents.length > 0);
+
+    // 内容键不含 updated_at：心跳只改时间时不整板重绘，避免打断 :hover
+    const renderKey = agents.join("|") + "#" + tasks.map(t =>
+      [t.task_id, t.agent, t.status, t.name, t.detail || ""].join(":")
+    ).join(";");
     timeEl.textContent = new Date().toLocaleTimeString("zh-CN", { hour12: false });
 
+    if (renderKey === lastRenderKey && board.children.length) {
+      // 轻量刷新卡片时间戳
+      tasks.forEach(t => {
+        const span = board.querySelector(`.task[data-id="${CSS.escape(t.task_id)}"] .task-foot > span:first-child`);
+        if (span) span.textContent = ftime(t.updated_at);
+      });
+      return;
+    }
+    lastRenderKey = renderKey;
+
     const scrollMap = {};
+    const boardScroll = board.scrollLeft;
+    const hoveredAgent = board.querySelector(".lane:hover")?.dataset.agent;
+    const hoveredTask = board.querySelector(".task:hover")?.dataset.id;
     board.querySelectorAll(".lane-body").forEach(el => {
       const agent = el.closest(".lane")?.dataset.agent;
       if (agent) scrollMap[agent] = el.scrollTop;
     });
 
     board.innerHTML = agents.map(agent => {
-      const pool = sortTasks(groups[agent].slice());
+      const pool = sortTasks((groups[agent] || []).slice());
       const run = pool.filter(isRunning).length;
       const pend = pool.filter(isPending).length;
       const ended = pool.length - run - pend;
       const meta = AGENT_META[agent] || { label: agent, icon: "•" };
       const cards = pool.map(cardHTML).join("");
       return `
-        <section class="lane" data-agent="${agent}">
-          <header class="lane-head">
+        <section class="lane" data-agent="${escapeAttr(agent)}">
+          <header class="lane-head" draggable="true" title="拖拽排序">
+            <span class="lane-grip" aria-hidden="true">⠿</span>
             <span class="lane-icon">${meta.icon}</span>
             <h2 class="lane-title">${escapeHtml(meta.label)}</h2>
             <div class="lane-stats">
@@ -130,6 +169,14 @@
       const agent = el.closest(".lane")?.dataset.agent;
       if (agent && scrollMap[agent] != null) el.scrollTop = scrollMap[agent];
     });
+    board.scrollLeft = boardScroll;
+
+    // 重绘后瞬时补回 hover 高亮（指针仍在上方时）
+    if (hoveredTask) {
+      board.querySelector(`.task[data-id="${CSS.escape(hoveredTask)}"]`)?.classList.add("is-hot");
+    } else if (hoveredAgent) {
+      board.querySelector(`.lane[data-agent="${CSS.escape(hoveredAgent)}"]`)?.classList.add("is-hot");
+    }
   }
 
   function cardHTML(t) {
@@ -141,15 +188,18 @@
     const endBtn = !isEnded(t)
       ? `<button type="button" class="task-end" data-end="${escapeAttr(t.task_id)}" title="手动结束">结束</button>`
       : "";
+    const detail = (t.detail || "").trim();
+    const detailHtml = detail
+      ? `<p class="task-detail tippable${isEnded(t) || isPending(t) ? " last-reply" : ""}" data-tip="${escapeAttr(detail)}">${escapeHtml(detail)}</p>`
+      : "";
     return `
-      <article class="task${cls}" data-id="${escapeAttr(t.task_id)}" data-agent="${escapeAttr(t.agent)}" title="点击聚焦到 ${escapeAttr(t.agent)}">
+      <article class="task${cls}" data-id="${escapeAttr(t.task_id)}">
         <div class="task-top">
           <span class="dot ${dotCls.trim()}"></span>
-          <h3 class="task-name">${escapeHtml(t.name)}</h3>
+          <h3 class="task-name tippable" data-tip="${escapeAttr(t.name || "")}">${escapeHtml(t.name)}</h3>
           <span class="task-status ${isRunning(t) ? "running" : isPending(t) ? "pending" : "ended"}">${statusLabel}</span>
         </div>
-        ${t.detail ? `<p class="task-detail">${escapeHtml(t.detail)}</p>` : ""}
-        <div class="task-stage">${escapeHtml(t.stage || "—")}</div>
+        ${detailHtml}
         <footer class="task-foot">
           <span>${ftime(t.updated_at)}</span>
           ${endBtn}
@@ -157,11 +207,11 @@
       </article>`;
   }
 
-  async function focusAgent(agent) {
+  function focusAgent(agent, taskId) {
     if (!agent) return;
-    try {
-      await fetch(`/api/focus/${encodeURIComponent(agent)}`, { method: "POST" });
-    } catch (_) {}
+    const q = taskId ? `?task_id=${encodeURIComponent(taskId)}` : "";
+    // 不 await：聚焦走本机 open/osascript，等返回会让点击像「没反应」
+    fetch(`/api/focus/${encodeURIComponent(agent)}${q}`, { method: "POST", keepalive: true }).catch(() => {});
   }
 
   async function endTask(taskId) {
@@ -179,6 +229,28 @@
     } catch (_) {}
   }
 
+  let skipNextFocus = false;
+
+  // 按下立刻高亮，松手/离开再清
+  board.addEventListener("pointerdown", e => {
+    if (e.button != null && e.button !== 0) return;
+    if (e.target.closest(".task-end")) return;
+    const task = e.target.closest(".task");
+    const lane = e.target.closest(".lane");
+    board.querySelectorAll(".is-press, .is-hot").forEach(el => el.classList.remove("is-press", "is-hot"));
+    if (task) task.classList.add("is-press");
+    else if (lane) lane.classList.add("is-press");
+  });
+  const clearPress = () => board.querySelectorAll(".is-press").forEach(el => el.classList.remove("is-press"));
+  board.addEventListener("pointerup", clearPress);
+  board.addEventListener("pointercancel", clearPress);
+  board.addEventListener("pointerleave", clearPress);
+  // 指针一动就清掉重绘补的 is-hot，交还真正的 :hover
+  board.addEventListener("pointermove", () => {
+    const hot = board.querySelectorAll(".is-hot");
+    if (hot.length) hot.forEach(el => el.classList.remove("is-hot"));
+  }, { passive: true });
+
   board.addEventListener("click", e => {
     const endBtn = e.target.closest(".task-end");
     if (endBtn) {
@@ -187,9 +259,82 @@
       endTask(endBtn.dataset.end);
       return;
     }
-    const card = e.target.closest(".task");
-    if (card) focusAgent(card.dataset.agent);
+    if (skipNextFocus) {
+      skipNextFocus = false;
+      return;
+    }
+    const lane = e.target.closest(".lane");
+    if (lane) {
+      const task = e.target.closest(".task");
+      focusAgent(lane.dataset.agent, task?.dataset.id);
+    }
   });
+
+  // 拖拽泳道排序（拖标题栏）
+  let dragAgent = null;
+  board.addEventListener("dragstart", e => {
+    const head = e.target.closest(".lane-head");
+    if (!head) { e.preventDefault(); return; }
+    const lane = head.closest(".lane");
+    if (!lane) return;
+    dragAgent = lane.dataset.agent;
+    skipNextFocus = false;
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/plain", dragAgent);
+    requestAnimationFrame(() => lane.classList.add("dragging"));
+  });
+  board.addEventListener("dragover", e => {
+    if (!dragAgent) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    const over = e.target.closest(".lane");
+    if (!over || over.dataset.agent === dragAgent) return;
+    const dragging = board.querySelector(`.lane[data-agent="${CSS.escape(dragAgent)}"]`);
+    if (!dragging || dragging === over) return;
+    skipNextFocus = true;
+    const rect = over.getBoundingClientRect();
+    const before = e.clientX < rect.left + rect.width / 2;
+    board.insertBefore(dragging, before ? over : over.nextSibling);
+    // 拖到边缘时自动横向滚动
+    const edge = 48;
+    const bRect = board.getBoundingClientRect();
+    if (e.clientX < bRect.left + edge) board.scrollLeft -= 18;
+    else if (e.clientX > bRect.right - edge) board.scrollLeft += 18;
+  });
+  board.addEventListener("drop", e => {
+    e.preventDefault();
+    persistLaneDomOrder();
+  });
+  board.addEventListener("dragend", () => {
+    board.querySelectorAll(".lane.dragging, .lane.drag-over").forEach(el => {
+      el.classList.remove("dragging", "drag-over");
+    });
+    persistLaneDomOrder();
+    dragAgent = null;
+  });
+
+  // 触控板/滚轮：横向始终滚看板；纵向在泳道内可竖滚，否则转为看板左右
+  board.addEventListener("wheel", e => {
+    if (board.scrollWidth <= board.clientWidth) return;
+    const absX = Math.abs(e.deltaX);
+    const absY = Math.abs(e.deltaY);
+
+    // 泳道不吃横向，一律交给看板
+    if (absX > absY) {
+      e.preventDefault();
+      board.scrollLeft += e.deltaX;
+      return;
+    }
+
+    const body = e.target.closest(".lane-body");
+    if (body && body.scrollHeight > body.clientHeight + 1) {
+      const top = body.scrollTop <= 0;
+      const bottom = body.scrollTop + body.clientHeight >= body.scrollHeight - 1;
+      if (!(top && e.deltaY < 0) && !(bottom && e.deltaY > 0)) return;
+    }
+    e.preventDefault();
+    board.scrollLeft += e.deltaY;
+  }, { passive: false });
 
   async function clearAll() {
     if (!confirm("确定清空全部任务？此操作不可恢复。")) return;
@@ -202,6 +347,116 @@
     finally { clearBtn.disabled = false; }
   }
   clearBtn.addEventListener("click", clearAll);
+
+  // ── floating tooltip ──
+  const tipEl = document.createElement("div");
+  tipEl.className = "apm-tip";
+  tipEl.setAttribute("role", "tooltip");
+  document.body.appendChild(tipEl);
+
+  let tipAnchor = null;
+  let tipTimer = null;
+  let overTip = false;
+  const TIP_SHOW_MS = 480;
+  const TIP_HIDE_MS = 180;
+
+  function hideTip() {
+    clearTimeout(tipTimer);
+    tipTimer = null;
+    tipAnchor = null;
+    overTip = false;
+    tipEl.classList.remove("show");
+    tipEl.textContent = "";
+  }
+
+  function scheduleHide() {
+    clearTimeout(tipTimer);
+    tipTimer = setTimeout(() => {
+      if (overTip) return;
+      if (tipAnchor && tipAnchor.matches(":hover")) return;
+      hideTip();
+    }, TIP_HIDE_MS);
+  }
+
+  function scheduleShow(anchor) {
+    clearTimeout(tipTimer);
+    tipTimer = setTimeout(() => {
+      if (!anchor.isConnected || !anchor.matches(":hover")) return;
+      showTip(anchor);
+    }, TIP_SHOW_MS);
+  }
+
+  function placeTip(anchor) {
+    const rect = anchor.getBoundingClientRect();
+    const pad = 10;
+    tipEl.classList.add("show");
+    const tw = tipEl.offsetWidth || 280;
+    const th = tipEl.offsetHeight || 40;
+    let left = rect.left;
+    let top = rect.bottom + 6;
+    if (left + tw > window.innerWidth - pad) left = Math.max(pad, window.innerWidth - tw - pad);
+    if (left < pad) left = pad;
+    if (top + th > window.innerHeight - pad) top = Math.max(pad, rect.top - th - 6);
+    tipEl.style.left = left + "px";
+    tipEl.style.top = top + "px";
+  }
+
+  function showTip(anchor) {
+    const text = (anchor.getAttribute("data-tip") || "").trim();
+    if (!text) return;
+    clearTimeout(tipTimer);
+    tipAnchor = anchor;
+    tipEl.textContent = text;
+    placeTip(anchor);
+  }
+
+  function relatedInsideTipArea(related) {
+    if (!related || !(related instanceof Node)) return false;
+    if (related === tipEl || tipEl.contains(related)) return true;
+    if (tipAnchor && (related === tipAnchor || tipAnchor.contains(related))) return true;
+    return false;
+  }
+
+  board.addEventListener("mouseover", e => {
+    const el = e.target.closest(".tippable");
+    if (!el || !board.contains(el)) return;
+    if (tipAnchor === el && tipEl.classList.contains("show")) {
+      clearTimeout(tipTimer);
+      return;
+    }
+    scheduleShow(el);
+  });
+
+  board.addEventListener("mouseout", e => {
+    const el = e.target.closest(".tippable");
+    if (!el) return;
+    // 还在延迟展示中就离开 → 取消弹出
+    if (tipAnchor !== el && !tipEl.classList.contains("show")) {
+      if (relatedInsideTipArea(e.relatedTarget)) return;
+      clearTimeout(tipTimer);
+      tipTimer = null;
+      return;
+    }
+    if (el !== tipAnchor) return;
+    if (relatedInsideTipArea(e.relatedTarget)) {
+      clearTimeout(tipTimer);
+      return;
+    }
+    scheduleHide();
+  });
+
+  tipEl.addEventListener("mouseenter", () => {
+    overTip = true;
+    clearTimeout(tipTimer);
+  });
+  tipEl.addEventListener("mouseleave", e => {
+    overTip = false;
+    if (relatedInsideTipArea(e.relatedTarget)) return;
+    scheduleHide();
+  });
+
+  board.addEventListener("scroll", hideTip, true);
+  window.addEventListener("scroll", hideTip, true);
 
   // ── utils ──
   function escapeHtml(s) {
@@ -220,6 +475,9 @@
   }
 
   // ── boot ──
-  fetch("/api/tasks").then(r => r.json()).then(j => { render(j.tasks); lastSSEMsgAt = Date.now(); }).catch(() => render([]));
+  fetch("/api/tasks").then(r => r.json()).then(j => {
+    applyPayload(j);
+    lastSSEMsgAt = Date.now();
+  }).catch(() => render([]));
   connectSSE();
 })();
