@@ -21,6 +21,7 @@ Hooks 由工作台运行时**自动触发**，无需 AI 自觉调 MCP 工具，�
 """
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -58,17 +59,68 @@ def _user_prompt(event: dict) -> str:
     for key in ("prompt", "user_prompt", "content"):
         val = event.get(key)
         if isinstance(val, str) and val.strip():
-            return val.strip()
+            return _strip_hook_context(val)
     # CLI / 显式 name 也算「本轮标题」
     name = event.get("name")
     if isinstance(name, str) and name.strip():
-        return name.strip()
+        return _strip_hook_context(name)
     return ""
+
+
+_REASONIX_META_TAGS = (
+    "hook-context",
+    "reasoning-language",
+    "response-language",
+)
+
+# Reasonix 会把 SessionStart / 语言偏好等包进 <tag>...</tag>，再拼到用户原文前面
+_REASONIX_META_BLOCK_RE = re.compile(
+    r"<(" + "|".join(re.escape(t) for t in _REASONIX_META_TAGS) + r")\b[^>]*>.*?</\1>",
+    re.DOTALL | re.IGNORECASE,
+)
+_REASONIX_META_LINE_RE = re.compile(
+    r"^\s*</?(?:" + "|".join(re.escape(t) for t in _REASONIX_META_TAGS) + r")\b[^>]*>\s*$",
+    re.IGNORECASE,
+)
+
+
+def _strip_hook_context(text: str) -> str:
+    """去掉 Reasonix 注入的 meta 标签，只留真实用户话。"""
+    cleaned = _REASONIX_META_BLOCK_RE.sub("", text)
+    lines = []
+    for line in cleaned.splitlines():
+        if _REASONIX_META_LINE_RE.match(line):
+            continue
+        # 其它纯标签行（如残缺开标签）也不当标题
+        s = line.strip()
+        if s.startswith("<") and s.endswith(">") and " " not in s[1:-1].replace("-", ""):
+            # 形如 <foo> / </foo> / <foo-bar>
+            inner = s.strip("<>/")
+            if re.fullmatch(r"[A-Za-z][\w-]*", inner or ""):
+                continue
+        if not s:
+            if lines and lines[-1] != "":
+                lines.append("")
+            continue
+        lines.append(line)
+    return "\n".join(lines).strip()
 
 
 def _title_from_prompt(prompt: str, limit: int = 100) -> str:
     """用提示词首行做看板标题，过长截断。"""
-    one = prompt.splitlines()[0].strip() or prompt.strip()
+    prompt = _strip_hook_context(prompt)
+    if not prompt:
+        return ""
+    # 跳过仍像标签的行，取第一句真人话
+    one = ""
+    for line in prompt.splitlines():
+        s = line.strip()
+        if not s or s.startswith("<"):
+            continue
+        one = s
+        break
+    if not one:
+        one = prompt.strip()
     one = " ".join(one.split())  # 压空白，看板更清晰
     if len(one) > limit:
         return one[: limit - 1] + "…"
@@ -79,7 +131,9 @@ def _task_name_for(agent: str, event: dict, task_id: str) -> str:
     """从 hook 上下文抽一个人类可读的任务名（优先本轮用户提示词）。"""
     prompt = _user_prompt(event)
     if prompt:
-        return _title_from_prompt(prompt)
+        title = _title_from_prompt(prompt)
+        if title:
+            return title
     title = event.get("session_title")
     if isinstance(title, str) and title.strip():
         return title.strip()[:100]
@@ -92,7 +146,13 @@ def _task_name_for(agent: str, event: dict, task_id: str) -> str:
 
 def _assistant_text(event: dict) -> str:
     """各工作台末条助手文案字段兼容。"""
-    for key in ("last_assistant_message", "text", "message", "agent_message"):
+    for key in (
+        "last_assistant_message",
+        "lastAssistantText",  # Reasonix
+        "text",
+        "message",
+        "agent_message",
+    ):
         val = event.get(key)
         if isinstance(val, str) and val.strip():
             return val.strip()
@@ -133,15 +193,17 @@ def _handle_session_start(agent: str, event: dict) -> dict:
 
 def _handle_inject_hint(agent: str, event: dict) -> dict:
     """空会话开始：只注入黄灯用语提示，不建任务（Cursor sessionStart / Codex SessionStart）。"""
-    ev = event.get("hook_event_name") or "SessionStart"
+    ev = event.get("hook_event_name") or event.get("event") or "SessionStart"
+    if ev in ("sessionStart",):
+        ev = "SessionStart"
     return {
         "ok": True,
         "action": "inject_hint",
         # Cursor
         "additional_context": _CHOICE_HINT,
-        # Codex SessionStart
+        # Codex / Reasonix SessionStart：stdout 需带 hookSpecificOutput
         "hookSpecificOutput": {
-            "hookEventName": ev if ev not in ("sessionStart",) else "SessionStart",
+            "hookEventName": ev,
             "additionalContext": _CHOICE_HINT,
         },
     }
@@ -283,24 +345,31 @@ _EVENT_ALIASES = {
     "afterAgentResponse": "AfterAgentResponse",
     "stop": "Stop",
     "subagentStop": "Stop",  # 子代理结束；若曾误建卡则收尾，无卡则 skip
-    # Codex / Claude 风格
+    # Codex / Claude / Reasonix 风格
     "UserPromptSubmit": "SessionStart",       # 用户提交提示词 → 建/重启 + 改标题
+    "SubagentStop": "Stop",
 }
 
 
 def _resolve_event(agent: str, raw_ev: str) -> str:
-    """解析事件；Codex 的 SessionStart 只注入提示（建任务改走 UserPromptSubmit）。"""
-    if agent == "codex" and raw_ev == "SessionStart":
+    """解析事件；Codex / Reasonix 的 SessionStart 只注入提示（建任务改走 UserPromptSubmit）。"""
+    if agent in ("codex", "reasonix") and raw_ev == "SessionStart":
         return "InjectHint"
     return _EVENT_ALIASES.get(raw_ev, raw_ev)
 
 
 def _normalize_event(event: dict) -> dict:
-    """兼容 Cursor / Claude 等不同工作台的 hook 字段。"""
+    """兼容 Cursor / Claude / Reasonix 等不同工作台的 hook 字段。"""
     out = dict(event)
-    # Cursor: conversation_id ≈ session_id
-    if not out.get("session_id") and out.get("conversation_id"):
-        out["session_id"] = out["conversation_id"]
+    # Reasonix: event ≈ hook_event_name
+    if not out.get("hook_event_name") and out.get("event"):
+        out["hook_event_name"] = out["event"]
+    # Cursor: conversation_id ≈ session_id；Reasonix: sessionId
+    if not out.get("session_id"):
+        if out.get("conversation_id"):
+            out["session_id"] = out["conversation_id"]
+        elif out.get("sessionId"):
+            out["session_id"] = out["sessionId"]
     # Cursor: workspace_roots[0] 可当 cwd
     if not out.get("cwd"):
         roots = out.get("workspace_roots") or []
@@ -362,7 +431,18 @@ def main() -> int:
         return 0
 
     result = handler(args.agent, event)
-    print(json.dumps(result, ensure_ascii=False, default=str))
+    # Reasonix SessionStart 只认 stdout 里的 hookSpecificOutput / 纯文本；
+    # 整包 {ok,action,...} 会被当成上下文，下一轮标题就变成 <hook-context>。
+    if (
+        args.agent == "reasonix"
+        and isinstance(result, dict)
+        and result.get("action") == "inject_hint"
+        and isinstance(result.get("hookSpecificOutput"), dict)
+    ):
+        print(json.dumps({"hookSpecificOutput": result["hookSpecificOutput"]},
+                         ensure_ascii=False))
+    else:
+        print(json.dumps(result, ensure_ascii=False, default=str))
     return 0
 
 

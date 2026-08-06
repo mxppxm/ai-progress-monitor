@@ -1,0 +1,40 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "command": "<repo_root>/.venv/bin/python <repo_root>/scripts/hook_report.py --agent reasonix",
+        "description": "ai-progress-monitor: inject choice hint"
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "command": "<repo_root>/.venv/bin/python <repo_root>/scripts/hook_report.py --agent reasonix",
+        "description": "ai-progress-monitor: start/restart task"
+      }
+    ],
+    "PostToolUse": [
+      {
+        "command": "<repo_root>/.venv/bin/python <repo_root>/scripts/hook_report.py --agent reasonix",
+        "description": "ai-progress-monitor: heartbeat"
+      }
+    ],
+    "Stop": [
+      {
+        "command": "<repo_root>/.venv/bin/python <repo_root>/scripts/hook_report.py --agent reasonix",
+        "description": "ai-progress-monitor: turn done / choice"
+      }
+    ],
+    "SubagentStop": [
+      {
+        "command": "<repo_root>/.venv/bin/python <repo_root>/scripts/hook_report.py --agent reasonix",
+        "description": "ai-progress-monitor: subagent done"
+      }
+    ],
+    "SessionEnd": [
+      {
+        "command": "<repo_root>/.venv/bin/python <repo_root>/scripts/hook_report.py --agent reasonix",
+        "description": "ai-progress-monitor: session end"
+      }
+    ]
+  }
+}

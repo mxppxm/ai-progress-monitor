@@ -17,7 +17,7 @@
   const AGENT_META = {
     cursor:   { label: "Cursor",   icon: "✕" },
     codex:    { label: "Codex",    icon: "▣" },
-    opencode: { label: "OpenCode", icon: "◈" },
+    reasonix: { label: "Reasonix", icon: "◇" },
     clacky:   { label: "Clacky",   icon: "✦" },
   };
 
@@ -118,12 +118,10 @@
     const groups = {};
     tasks.forEach(t => { (groups[t.agent] = groups[t.agent] || []).push(t); });
 
-    const present = new Set([...registeredAgents, ...Object.keys(groups)]);
-    // 兜底：后端未返回 agents 时仍展示本地已知工作台
-    if (!registeredAgents.length) {
-      Object.keys(AGENT_META).forEach(a => present.add(a));
-    }
-    const agents = orderedAgents([...present]);
+    // 只展示已注册工作台；历史孤儿 agent（如已下线的 opencode）不再占泳道
+    const agents = orderedAgents(
+      registeredAgents.length ? [...registeredAgents] : Object.keys(AGENT_META)
+    );
     empty.classList.toggle("hidden", agents.length > 0);
 
     // 内容键不含 updated_at：心跳只改时间时不整板重绘，避免打断 :hover

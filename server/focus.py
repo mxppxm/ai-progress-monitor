@@ -10,7 +10,7 @@ from pathlib import Path
 AGENT_APPS: dict[str, tuple[str, ...]] = {
     "cursor": ("Cursor",),
     "codex": ("Codex",),
-    "opencode": ("FreeCode", "OpenCode"),
+    "reasonix": ("Reasonix",),
     # clacky 走 Chrome，不在此列
 }
 
@@ -20,7 +20,7 @@ CLACKY_SESSIONS = Path.home() / ".clacky" / "sessions"
 
 def registered_agents() -> list[str]:
     """返回已注册、可聚焦的工作台 ID 列表（固定顺序）。"""
-    return ["cursor", "codex", "opencode", "clacky"]
+    return ["cursor", "codex", "reasonix", "clacky"]
 
 
 def _open_app(app: str) -> bool:

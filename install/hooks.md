@@ -82,6 +82,21 @@ sed "s|<repo_root>|$REPO|g" "$REPO/client-configs/opencode-plugin.js" \
 `tool.execute.after` → PostToolUse 心跳；`event:session.deleted` → SessionEnd。
 排障日志：`~/Library/Logs/ai-progress-monitor/opencode-plugin.log`。
 
+### Reasonix
+
+合并 `$REPO/client-configs/reasonix-hooks.json` → `~/.reasonix/settings.json`（把 `<repo_root>` 换成 `$REPO` 绝对路径；已有其它 hooks 则合并保留）。
+
+```bash
+mkdir -p ~/.reasonix
+sed "s|<repo_root>|$REPO|g" "$REPO/client-configs/reasonix-hooks.json" \
+  > ~/.reasonix/settings.json
+```
+
+生效：**重启 Reasonix**（hooks 在会话构建时加载；`/new` 不会重读配置）。也可在桌面端「设置 → Hooks」确认全局配置已写入。
+
+事件：`SessionStart`（只注入黄灯提示）/ `UserPromptSubmit`（建/重启任务）/
+`PostToolUse` / `Stop` / `SubagentStop` / `SessionEnd`。
+
 ### Clacky
 
 Clacky **无原生会话生命周期 hooks**。推荐用**会话文件监听**自动上报（不依赖模型自觉调 MCP）：
