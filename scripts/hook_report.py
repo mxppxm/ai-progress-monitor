@@ -579,7 +579,8 @@ def _handle_session_end(agent: str, event: dict) -> dict:
         return {"ok": True, "task_id": task_id, "action": "keep", "status": st}
 
     reason = str(event.get("reason") or "other")
-    if agent == "reasonix" and reason == "other" and _reasonix_session_tab_open(task_id):
+    # Desktop 误发 other、或 watcher 在 tabs 抖动时误报 tab_closed：页签还开着就忽略
+    if agent == "reasonix" and reason in ("other", "tab_closed") and _reasonix_session_tab_open(task_id):
         return {
             "ok": True,
             "task_id": task_id,

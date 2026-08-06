@@ -33,9 +33,13 @@ STATE_PATH = REPO / "data" / "reasonix_watch_state.json"
 LOG_PATH = Path.home() / "Library" / "Logs" / "ai-progress-monitor" / "reasonix-watch.log"
 
 POLL_SEC = 1.0
-# 页签短暂切换 / 新建会话写 tabs 有竞态，给几秒缓冲
-ABSENT_SEC = 4.0
-APP_GONE_SEC = 5.0
+# 页签切换 / 写 tabs.json 会有空窗，必须足够长，避免误杀仍在聊的会话
+ABSENT_SEC = 20.0
+APP_GONE_SEC = 8.0
+# tabs 读到空列表要稳定一段时间才信（区分写文件竞态 vs 真关光）
+TABS_EMPTY_SEC = 15.0
+# 会话文件仍在写入则绝不因 tab_closed 收尾
+ACTIVE_SEC = 120.0
 _SID_RE = re.compile(r"^(\d{8}-\d{6}\.\d+)")
 _SID_SHORT_RE = re.compile(r"^(\d{8}-\d{6})")
 
@@ -84,27 +88,33 @@ def session_suffix(sid: str) -> str:
     return s[:8]
 
 
-def open_tab_session_suffixes() -> set[str]:
-    """当前桌面打开页签对应的会话后缀。"""
+def open_tab_session_suffixes() -> set[str] | None:
+    """当前桌面打开页签对应的会话后缀。
+
+    返回 None 表示读失败/JSON 损坏（不可信，本轮不要据此收尾）。
+    返回空 set 表示文件读成功且 tabs 真为空。
+    """
     try:
-        data = json.loads(TABS_PATH.read_text(encoding="utf-8"))
+        raw = TABS_PATH.read_text(encoding="utf-8")
+        if not raw.strip():
+            return None
+        data = json.loads(raw)
     except Exception:
-        return set()
+        return None
     tabs = data.get("tabs") if isinstance(data, dict) else None
     if not isinstance(tabs, list):
-        return set()
+        return None
     out: set[str] = set()
     for tab in tabs:
         if not isinstance(tab, dict):
             continue
         for key in ("sessionPath", "session_path"):
-            raw = tab.get(key)
-            if isinstance(raw, str) and raw.strip():
-                out.add(session_suffix(Path(raw).name))
+            raw_path = tab.get(key)
+            if isinstance(raw_path, str) and raw_path.strip():
+                out.add(session_suffix(Path(raw_path).name))
                 break
         topic = tab.get("topicId") or tab.get("topic_id")
         if isinstance(topic, str) and topic.startswith("topic_"):
-            # topic_20260806-110003_61cd... → 至少到秒；与小数秒卡兼容靠前缀匹配
             body = topic[len("topic_") :]
             out.add(session_suffix(body.split("_", 1)[0]))
     return out
@@ -123,16 +133,20 @@ def reasonix_app_running() -> bool:
         return False
 
 
-def list_open_reasonix_tasks() -> list[str]:
+def list_reasonix_tasks(*statuses: str) -> list[str]:
     if not DB_PATH.is_file():
         return []
+    if not statuses:
+        statuses = ("running", "pending")
+    placeholders = ",".join("?" * len(statuses))
     try:
         con = sqlite3.connect(str(DB_PATH))
         try:
             rows = con.execute(
-                "SELECT task_id FROM tasks "
-                "WHERE agent='reasonix' AND status IN ('running','pending') "
-                "AND COALESCE(archived,0)=0"
+                f"SELECT task_id FROM tasks "
+                f"WHERE agent='reasonix' AND status IN ({placeholders}) "
+                f"AND COALESCE(archived,0)=0",
+                statuses,
             ).fetchall()
         finally:
             con.close()
@@ -142,10 +156,37 @@ def list_open_reasonix_tasks() -> list[str]:
         return []
 
 
+def list_open_reasonix_tasks() -> list[str]:
+    return list_reasonix_tasks("running", "pending")
+
+
 def task_session_suffix(task_id: str) -> str:
     if task_id.startswith("reasonix-"):
         return session_suffix(task_id[len("reasonix-") :])
     return session_suffix(task_id)
+
+
+def session_recently_active(sid: str, now: float) -> bool:
+    """会话 transcript 仍在更新 → 视为还在跑，禁止 tab_closed。"""
+    if not PROJECTS.is_dir():
+        return False
+    short = sid.split(".", 1)[0]
+    for p in PROJECTS.glob("*/sessions/*"):
+        name = p.name
+        if not (name.endswith(".jsonl") or name.endswith(".events.jsonl")):
+            continue
+        if not (name.startswith(sid) or name.startswith(short)):
+            continue
+        # 避免短前缀误匹配其它会话：要求下一段是 '.' 或 '-'
+        rest = name[len(short) :] if name.startswith(short) else name[len(sid) :]
+        if rest and rest[0] not in ".-":
+            continue
+        try:
+            if now - p.stat().st_mtime <= ACTIVE_SEC:
+                return True
+        except OSError:
+            continue
+    return False
 
 
 def report_session_end(session_id: str, reason: str) -> None:
@@ -171,8 +212,39 @@ def report_session_end(session_id: str, reason: str) -> None:
         log(f"session_end error sid={session_id}: {e}")
 
 
+def report_resume(session_id: str) -> None:
+    """误杀后页签仍开着：用 UserPromptSubmit 空提示词拉回 running（不改标题）。"""
+    event = {
+        "event": "UserPromptSubmit",
+        "sessionId": session_id,
+        "prompt": "",
+    }
+    try:
+        r = subprocess.run(
+            [str(PY), str(SCRIPT), "--agent", "reasonix"],
+            input=json.dumps(event, ensure_ascii=False),
+            capture_output=True,
+            text=True,
+            timeout=12,
+        )
+        out = (r.stdout or "").strip()
+        log(f"revive sid={session_id[:40]} code={r.returncode} out={out[:200]}")
+    except Exception as e:
+        log(f"revive error sid={session_id}: {e}")
+
+
+def _still_open(sid: str, open_exact: set[str]) -> bool:
+    if sid in open_exact:
+        return True
+    short = sid.split(".", 1)[0]
+    for o in open_exact:
+        if o.split(".", 1)[0] == short:
+            return True
+    return False
+
+
 def reconcile_closed_sessions(state: dict) -> None:
-    """页签关掉或 App 退出时，补发 SessionEnd。"""
+    """页签关掉或 App 退出时，补发 SessionEnd（保守：宁可晚收尾，不误杀）。"""
     now = time.time()
     absent: dict = state.setdefault("absent_since", {})
     app_gone_since = state.get("app_gone_since")
@@ -182,6 +254,7 @@ def reconcile_closed_sessions(state: dict) -> None:
         state["app_gone_since"] = None
         app_gone_since = None
     else:
+        state["tabs_empty_since"] = None
         if app_gone_since is None:
             state["app_gone_since"] = now
             app_gone_since = now
@@ -190,18 +263,34 @@ def reconcile_closed_sessions(state: dict) -> None:
                 sid = task_session_suffix(tid)
                 report_session_end(sid, "app_quit")
                 absent.pop(tid, None)
+            state["last_open_sids"] = []
             return
 
-    open_exact = open_tab_session_suffixes()
+    open_read = open_tab_session_suffixes()
+    if open_read is None:
+        # 读失败：完全不动收尾状态
+        return
 
-    def still_open(sid: str) -> bool:
-        if sid in open_exact:
-            return True
-        short = sid.split(".", 1)[0]
-        for o in open_exact:
-            if o.split(".", 1)[0] == short:
-                return True
-        return False
+    if running and not open_read:
+        empty_since = state.get("tabs_empty_since")
+        if empty_since is None:
+            state["tabs_empty_since"] = now
+            return
+        if now - float(empty_since) < TABS_EMPTY_SEC:
+            return
+        open_exact: set[str] = set()
+        state["last_open_sids"] = []
+    else:
+        state["tabs_empty_since"] = None
+        open_exact = set(open_read)
+        state["last_open_sids"] = sorted(open_exact)
+
+    # 页签还开着、却被误标 done → 拉回 running
+    for tid in list_reasonix_tasks("done"):
+        sid = task_session_suffix(tid)
+        if _still_open(sid, open_exact):
+            report_resume(sid)
+            absent.pop(tid, None)
 
     live = set(list_open_reasonix_tasks())
     for tid in list(absent.keys()):
@@ -210,7 +299,11 @@ def reconcile_closed_sessions(state: dict) -> None:
 
     for tid in live:
         sid = task_session_suffix(tid)
-        if still_open(sid):
+        if _still_open(sid, open_exact):
+            absent.pop(tid, None)
+            continue
+        if session_recently_active(sid, now):
+            # 还在写 transcript：多半是 tabs 抖动，重置计时
             absent.pop(tid, None)
             continue
         since = absent.get(tid)
