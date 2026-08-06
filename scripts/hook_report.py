@@ -322,7 +322,10 @@ def _handle_post_tool_use(agent: str, event: dict) -> dict:
 
 
 def _handle_notification(agent: str, event: dict) -> dict:
-    """Reasonix Notification：等待审批/选择时也亮黄灯。"""
+    """Reasonix Notification：仅当文案本身是拍板意图时亮黄灯。
+
+    工具审批（approval needed: bash …）不算用户二选一，避免误黄灯。
+    """
     msg = str(event.get("message") or "").strip()
     if not msg:
         return {"ok": True, "action": "skip", "reason": "empty"}
@@ -330,23 +333,19 @@ def _handle_notification(agent: str, event: dict) -> dict:
     existing = db.get_task(task_id)
     if existing is None:
         return {"ok": True, "action": "skip", "reason": "no_task"}
-    # 审批/选择类通知 → pending；其余仅更新 detail
-    choice = db.is_choice_message(msg) or any(
-        k in msg.lower() for k in ("approval", "approve", "ask", "选择", "审批", "确认")
-    )
-    if not choice:
+    if not db.is_choice_message(msg):
+        # 审批类通知只刷新 detail，不改状态
         db.update_progress(task_id, detail=msg[:500])
         db.bump_version()
         return {"ok": True, "task_id": task_id, "action": "detail"}
-    detail = msg if db.is_choice_message(msg) else f"需要你选择：{msg}"
     log = db.log_node(
-        task_id, "step", detail[:500],
+        task_id, "step", msg[:500],
         {"hook": "Notification", "choice": True},
     )
     db.bump_version()
     if log is None:
         return {"ok": False, "error": "task 不存在"}
-    _notify_after_log(task_id, "step", detail[:500])
+    _notify_after_log(task_id, "step", msg[:500])
     return {"ok": True, "task_id": task_id, "action": "pending", "node_type": "step"}
 
 

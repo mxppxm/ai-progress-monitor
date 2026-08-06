@@ -16,7 +16,8 @@
       {
         "match": "ask",
         "command": "<repo_root>/.venv/bin/python <repo_root>/scripts/hook_report.py --agent reasonix",
-        "description": "ai-progress-monitor: ask → yellow pending"
+        "description": "ai-progress-monitor: ask → yellow pending",
+        "timeout": 15000
       }
     ],
     "PostToolUse": [

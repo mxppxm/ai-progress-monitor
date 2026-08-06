@@ -98,6 +98,10 @@ sed "s|<repo_root>|$REPO|g" "$REPO/client-configs/reasonix-hooks.json" \
 `PreToolUse(ask)`（选择卡 → 黄灯）/ `PostToolUse` / `Notification` /
 `Stop` / `SubagentStop` / `SessionEnd`。
 
+兜底：长会话若在补 hook 前已创建，ask 可能不走 PreToolUse。本机 LaunchAgent
+`com.mxppxm.ai-progress-reasonix-watch` 监听 `~/.reasonix/projects/**/sessions/*.events.jsonl`，
+发现未作答的 `ask` 也会亮黄灯（`scripts/run_reasonix_watch.sh`）。
+
 ### Clacky
 
 Clacky **无原生会话生命周期 hooks**。推荐用**会话文件监听**自动上报（不依赖模型自觉调 MCP）：
