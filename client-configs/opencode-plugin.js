@@ -1,9 +1,12 @@
-const PY = "/Users/mico/clacky_workspace/ai-progress-monitor/.venv/bin/python"
-const SCRIPT = "/Users/mico/clacky_workspace/ai-progress-monitor/scripts/hook_report.py"
-const LOG = "/Users/mico/Library/Logs/ai-progress-monitor/opencode-plugin.log"
+// 安装时把 <repo_root> 换成仓库绝对路径（见 install/hooks.md）
+const REPO = "<repo_root>"
+const PY = `${REPO}/.venv/bin/python`
+const SCRIPT = `${REPO}/scripts/hook_report.py`
+const LOG_DIR = `${process.env.HOME}/Library/Logs/ai-progress-monitor`
+const LOG = `${LOG_DIR}/opencode-plugin.log`
 
 const CHOICE_RE =
-  /需要选择|请你选择|请选择|需要你选|需要你决定|你来决定|你来定|请你决定|请你拍板|你来拍板|二选一|待选择|得你定|等你决定|等你的选择|选\s*[aab]|a\s*还是\s*b/i
+  /需要选择|请你选择|请选择|需要你选|需要你决定|你来决定|你来定|请你决定|请你拍板|你来拍板|二选一|得你定|等你决定|等你的选择|选\s*[aab]|a\s*还是\s*b/i
 
 const CHOICE_HINT =
   "【进度看板】若需要用户拍板/二选一，请在回复里明确写上「需要你选择」或「你来决定」，看板会亮黄灯；停止输出即视为本轮结束，用户继续对话会自动重启任务。"
@@ -15,7 +18,7 @@ export const AiProgressReport = async (ctx) => {
 
   const log = async (line) => {
     try {
-      await fs.mkdir("/Users/mico/Library/Logs/ai-progress-monitor", { recursive: true })
+      await fs.mkdir(LOG_DIR, { recursive: true })
       await fs.appendFile(LOG, `[${new Date().toISOString()}] ${line}\n`)
     } catch {}
   }

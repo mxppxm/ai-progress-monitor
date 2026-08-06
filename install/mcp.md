@@ -14,7 +14,7 @@
 
 1. 当前 workspace / cwd 已是本仓库（存在 `server/mcp_server.py`）→ 用其绝对路径
 2. 用户消息里写了路径 → 用该路径
-3. 默认常见路径：`~/clacky_workspace/ai-progress-monitor`（若存在）
+3. 用户环境变量 `AI_PROGRESS_MONITOR_REPO`（若已设置）
 4. 仍找不到 → 询问用户 REPO 绝对路径
 
 ## 二、确认依赖

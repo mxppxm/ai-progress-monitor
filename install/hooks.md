@@ -12,7 +12,7 @@
 
 1. 当前 workspace / cwd 已是本仓库（存在 `scripts/hook_report.py`）→ 用其绝对路径
 2. 用户消息里写了路径 → 用该路径
-3. 默认常见路径：`~/clacky_workspace/ai-progress-monitor`（若存在）
+3. 用户环境变量 `AI_PROGRESS_MONITOR_REPO`（若已设置）
 4. 仍找不到 → 询问用户 REPO 绝对路径，**不要猜测乱写**
 
 ## 二、确认依赖
@@ -68,11 +68,12 @@ hooks = true
 ### OpenCode
 
 OpenCode 无 `hook` 配置字段，事件挂钩走 **插件系统**：把 `$REPO/client-configs/opencode-plugin.js`
-复制为 `~/.config/opencode/plugins/ai-progress-report.js`（插件内部调用 `hook_report.py --agent opencode`）。
+复制为 `~/.config/opencode/plugins/ai-progress-report.js`，并把模板里的 `<repo_root>` 换成 `$REPO` 绝对路径。
 
 ```bash
 mkdir -p ~/.config/opencode/plugins
-cp "$REPO/client-configs/opencode-plugin.js" ~/.config/opencode/plugins/ai-progress-report.js
+sed "s|<repo_root>|$REPO|g" "$REPO/client-configs/opencode-plugin.js" \
+  > ~/.config/opencode/plugins/ai-progress-report.js
 ```
 
 生效：**重启 OpenCode**（插件在启动时加载）。已运行的旧会话不回补历史，下次会话自动上报。

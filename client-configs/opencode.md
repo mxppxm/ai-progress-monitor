@@ -4,11 +4,13 @@ OpenCode 没有 `hook` 配置字段，事件挂钩走**插件系统**（启动�
 
 ## 方式一：插件（推荐 · 自动上报）
 
-把 `client-configs/opencode-plugin.js` 复制为 `~/.config/opencode/plugins/ai-progress-report.js`：
+把 `client-configs/opencode-plugin.js` 写入插件目录，并把模板里的 `<repo_root>` 换成真实绝对路径：
 
 ```bash
+REPO="<repo_root>"   # 换成仓库绝对路径
 mkdir -p ~/.config/opencode/plugins
-cp <repo_root>/client-configs/opencode-plugin.js ~/.config/opencode/plugins/ai-progress-report.js
+sed "s|<repo_root>|$REPO|g" "$REPO/client-configs/opencode-plugin.js" \
+  > ~/.config/opencode/plugins/ai-progress-report.js
 ```
 
 插件订阅 opencode 事件并调用 `scripts/hook_report.py --agent opencode`，语义与 hooks 一致：
@@ -29,7 +31,7 @@ cp <repo_root>/client-configs/opencode-plugin.js ~/.config/opencode/plugins/ai-p
 
 排障：看 `~/Library/Logs/ai-progress-monitor/opencode-plugin.log`（插件加载与每次上报会写一行）。
 
-插件内硬编码了仓库绝对路径，换机器/换路径需同步改插件里的 `PY` / `SCRIPT` 常量。
+模板用 `<repo_root>` 占位；安装时必须替换成绝对路径。换机器/换路径后重新跑上面的 `sed`。
 
 ## 方式二：MCP（兜底 · 自觉上报）
 

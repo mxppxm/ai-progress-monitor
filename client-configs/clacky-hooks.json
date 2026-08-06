@@ -2,7 +2,7 @@
   "agent": "clacky",
   "mode": "session-self-report",
   "_comment": "Clacky 无 Claude Code 式 SessionStart/Stop 事件 hooks，故用「会话内固定执行清单」+ 长期记忆固化，实现近似自动上报。执行入口统一走 hook_report.py --agent clacky 通用 CLI 语义。",
-  "entrypoint": "/Users/mico/clacky_workspace/ai-progress-monitor/.venv/bin/python /Users/mico/clacky_workspace/ai-progress-monitor/scripts/hook_report.py --agent clacky --task_id <task_id> --name <name> --event <Event> --message <msg>",
+  "entrypoint": "<repo_root>/.venv/bin/python <repo_root>/scripts/hook_report.py --agent clacky --task_id <task_id> --name <name> --event <Event> --message <msg>",
   "session_contract": [
     {
       "when": "会话开始 / 接长任务 / 用户新提示词",
