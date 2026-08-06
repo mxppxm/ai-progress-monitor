@@ -148,21 +148,23 @@ def _handle_inject_hint(agent: str, event: dict) -> dict:
 
 
 def _handle_post_tool_use(agent: str, event: dict) -> dict:
-    """工具用完后：记一个 step 心跳节点（不刷 updated_at，避免看板整板重绘打掉 hover）。"""
+    """工具心跳：只更新已有 running/pending 任务，绝不新建。
+
+    Cursor 的 Task 子代理会带自己的 conversation_id 打 postToolUse，
+    若这里建任务，子代理又常常不走 stop，就会留下「只有开始没有结束」的孤儿卡。
+    """
     task_id = _task_id_for(agent, event)
-    name = _task_name_for(agent, event, task_id)
     existing = db.get_task(task_id)
     if existing is None:
-        db.record_task(task_id, agent, name, update_name=False)
-    elif existing.get("status") not in ("running", "pending"):
-        # 已结束任务又有工具活动 → 拉回 running
-        db.record_task(task_id, agent, name, update_name=False)
+        return {"ok": True, "action": "skip", "reason": "no_task"}
+    if existing.get("status") not in ("running", "pending"):
+        return {"ok": True, "action": "skip", "reason": "not_active"}
     tool = event.get("tool_name") or "tool"
     msg = f"执行了 {tool}"
     log = db.log_node(task_id, "step", msg, {"tool": tool, "heartbeat": True})
     if log is None:
         return {"ok": False, "error": "task 不存在"}
-    # 心跳节点不 bump：否则 SSE 高频推送会整板 innerHTML，hover/点击体感迟滞
+    # 心跳不 bump：避免 SSE 高频整板重绘
     return {"ok": True, "task_id": task_id, "action": "log_node", "node_type": "step"}
 
 
@@ -171,7 +173,10 @@ def _handle_after_agent_response(agent: str, event: dict) -> dict:
     text = _assistant_text(event)
     if not text:
         return {"ok": True, "action": "skip", "reason": "empty"}
-    task_id, _ = _ensure_task(agent, event)
+    task_id = _task_id_for(agent, event)
+    if db.get_task(task_id) is None:
+        # 无主会话（常见于 subagent）不建卡
+        return {"ok": True, "action": "skip", "reason": "no_task"}
     msg = text[:500]
     if db.is_choice_message(text):
         log = db.log_node(task_id, "step", msg, {"hook": "AfterAgentResponse", "choice": True})
@@ -202,9 +207,12 @@ def _stop_display_text(event: dict, existing: dict | None) -> str:
 
 def _handle_stop(agent: str, event: dict) -> dict:
     """停止输出＝本轮结束：默认 success/done；末条含拍板用语或已 pending → 黄灯。"""
-    task_id, existing = _ensure_task(agent, event)
+    task_id = _task_id_for(agent, event)
+    existing = db.get_task(task_id)
+    if existing is None:
+        return {"ok": True, "action": "skip", "reason": "no_task"}
     hook_status = (event.get("status") or "").lower()
-    was_pending = bool(existing and existing.get("status") == "pending")
+    was_pending = bool(existing.get("status") == "pending")
     snippet = _stop_display_text(event, existing)
 
     # 已因 afterAgentResponse 亮黄灯，或本条 stop 自带拍板文案 → 保持/设为 pending
@@ -274,6 +282,7 @@ _EVENT_ALIASES = {
     "postToolUse": "PostToolUse",
     "afterAgentResponse": "AfterAgentResponse",
     "stop": "Stop",
+    "subagentStop": "Stop",  # 子代理结束；若曾误建卡则收尾，无卡则 skip
     # Codex / Claude 风格
     "UserPromptSubmit": "SessionStart",       # 用户提交提示词 → 建/重启 + 改标题
 }
