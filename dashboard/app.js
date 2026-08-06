@@ -89,6 +89,15 @@
   function isPending(t) { return t.status === "pending"; }
   function isEnded(t)   { return !isRunning(t) && !isPending(t); }
   const DONE_LABEL = { done: "已结束", failed: "已结束", paused: "暂停", pending: "待选择" };
+  const JUST_ENDED_SEC = 30;
+
+  /** 结束多久了（秒）；非刚结束返回 null */
+  function justEndedAge(t) {
+    if (!isEnded(t)) return null;
+    const age = Date.now() / 1000 - Number(t.updated_at || 0);
+    if (age < 0 || age >= JUST_ENDED_SEC) return null;
+    return age;
+  }
 
   /** 运行中 > 待选择 > 已结束；同组内按更新时间倒序 */
   function statusRank(t) {
@@ -177,14 +186,50 @@
     } else if (hoveredAgent) {
       board.querySelector(`.lane[data-agent="${CSS.escape(hoveredAgent)}"]`)?.classList.add("is-hot");
     }
+
+    // 边框进度条播完 → 去掉 just-ended，恢复普通已结束样式
+    board.querySelectorAll(".task.just-ended").forEach(el => {
+      const finish = () => {
+        if (!el.isConnected || !el.classList.contains("just-ended")) return;
+        el.classList.remove("just-ended");
+        el.style.removeProperty("--drain-delay");
+        const st = el.querySelector(".task-status");
+        if (st) {
+          st.textContent = "已结束";
+          st.classList.remove("fresh");
+          st.classList.add("ended");
+        }
+        const dot = el.querySelector(".dot");
+        if (dot) {
+          dot.classList.remove("fresh");
+          dot.classList.add("off");
+        }
+      };
+      el.addEventListener("animationend", (e) => {
+        if (e.animationName === "just-ended-drain") finish();
+      }, { once: true });
+      const delayRaw = el.style.getPropertyValue("--drain-delay") || "0s";
+      const delayMs = Number.parseFloat(delayRaw) || 0;
+      // --drain-delay 为负（已过秒数），剩余 = 30 + delay
+      const remainMs = Math.max(0, (JUST_ENDED_SEC + delayMs) * 1000) + 50;
+      setTimeout(finish, remainMs);
+    });
   }
 
   function cardHTML(t) {
-    const cls = isEnded(t) ? " ended" : (isPending(t) ? " pending" : "");
-    const dotCls = isEnded(t) ? " off" : (isPending(t) ? " pending" : " on");
+    const age = justEndedAge(t);
+    const fresh = age != null;
+    const cls = isEnded(t)
+      ? (fresh ? " ended just-ended" : " ended")
+      : (isPending(t) ? " pending" : "");
+    const dotCls = isEnded(t) ? (fresh ? " fresh" : " off") : (isPending(t) ? " pending" : " on");
     const statusLabel = isRunning(t) ? "运行中"
                        : isPending(t) ? "待选择"
-                       : (DONE_LABEL[t.status] || "已结束");
+                       : (fresh ? "刚结束" : (DONE_LABEL[t.status] || "已结束"));
+    const statusCls = isRunning(t) ? "running"
+                    : isPending(t) ? "pending"
+                    : (fresh ? "fresh" : "ended");
+    const drainStyle = fresh ? ` style="--drain-delay: -${age.toFixed(2)}s"` : "";
     const endBtn = !isEnded(t)
       ? `<button type="button" class="task-end" data-end="${escapeAttr(t.task_id)}" title="手动结束">结束</button>`
       : "";
@@ -193,11 +238,11 @@
       ? `<p class="task-detail tippable${isEnded(t) || isPending(t) ? " last-reply" : ""}" data-tip="${escapeAttr(detail)}">${escapeHtml(detail)}</p>`
       : "";
     return `
-      <article class="task${cls}" data-id="${escapeAttr(t.task_id)}">
+      <article class="task${cls}" data-id="${escapeAttr(t.task_id)}"${drainStyle}>
         <div class="task-top">
           <span class="dot ${dotCls.trim()}"></span>
           <h3 class="task-name tippable" data-tip="${escapeAttr(t.name || "")}">${escapeHtml(t.name)}</h3>
-          <span class="task-status ${isRunning(t) ? "running" : isPending(t) ? "pending" : "ended"}">${statusLabel}</span>
+          <span class="task-status ${statusCls}">${statusLabel}</span>
         </div>
         ${detailHtml}
         <footer class="task-foot">

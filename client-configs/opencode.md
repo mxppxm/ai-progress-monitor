@@ -17,7 +17,9 @@ cp <repo_root>/client-configs/opencode-plugin.js ~/.config/opencode/plugins/ai-p
 | :--- | :--- | :--- |
 | `chat.message`（用户提示词） | `SessionStart` | 建/重启任务，标题=提示词 |
 | `tool.execute.after` | `PostToolUse` | step 心跳 |
-| `event` → `session.status` idle / `session.idle` | `Stop` | 结束/黄灯 |
+| `experimental.text.complete` / `message.part.delta` | 缓存助手正文 | 供拍板用语检测 |
+| 正文含「需要你选择」等 | `AfterAgentResponse` | 立即黄灯 |
+| `event` → `session.status` idle / `session.idle` | `Stop`（带末条正文） | 结束；有拍板用语则保持黄灯 |
 | `event` → `session.deleted` | `SessionEnd` | 收尾 |
 
 > 注意：`message.updated` / `session.*` 属于 **Event**，必须挂在统一的 `event` 钩子上；
