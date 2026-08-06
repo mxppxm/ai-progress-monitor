@@ -23,6 +23,28 @@
         ]
       }
     ],
+    "Notification": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python <repo_root>/scripts/hook_report.py",
+            "args": ["--agent", "claude"]
+          }
+        ]
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python <repo_root>/scripts/hook_report.py",
+            "args": ["--agent", "claude"]
+          }
+        ]
+      }
+    ],
     "Stop": [
       {
         "hooks": [

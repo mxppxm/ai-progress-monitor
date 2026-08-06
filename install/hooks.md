@@ -95,7 +95,8 @@ sed "s|<repo_root>|$REPO|g" "$REPO/client-configs/reasonix-hooks.json" \
 生效：**重启 Reasonix**（hooks 在会话构建时加载；`/new` 不会重读配置）。也可在桌面端「设置 → Hooks」确认全局配置已写入。
 
 事件：`SessionStart`（只注入黄灯提示）/ `UserPromptSubmit`（建/重启任务）/
-`PreToolUse(ask)`（选择卡 → 黄灯）/ `PostToolUse` / `Notification` /
+`PreToolUse(ask)`（选择卡 → 黄灯）/ `PermissionRequest`（工具权限 → 黄灯）/
+`PostToolUse`（放行后续跑 → 收回黄灯）/ `Notification`（凡需用户注意 → 黄灯）/
 `Stop` / `SubagentStop` / `SessionEnd`。
 
 兜底：长会话若在补 hook 前已创建，ask 可能不走 PreToolUse。本机 LaunchAgent
@@ -126,7 +127,9 @@ MCP（`~/.clacky/mcp.json`）与长期记忆清单仍可作兜底，但有 watch
 | 时机 | 看板 |
 | :--- | :--- |
 | 用户提交提示词 | 建/重启为「运行中」，**标题＝本轮提示词** |
-| 停止输出 | 「已结束」；回复含「需要你选择 / 你来决定」→「待选择」黄灯 |
+| 停止输出 | 「已结束」；文案含拍板/确认用语 →「待选择」黄灯 |
+| 权限审批 / Notification / ask | 「待选择」黄灯（流程卡住等你操作） |
+| 你放行后工具继续 | 收回为「运行中」 |
 | 再发消息 | 同一任务重启，标题换成新提示词 |
 | 新建空会话 | 不建任务（只注入拍板用语提示） |
 

@@ -19,7 +19,8 @@ _LOCK = threading.Lock()
 # 关键节点类型枚举（用于触发系统通知）
 NODE_TYPES = ("step", "milestone", "success", "fail")
 
-# 黄灯(pending)：节点 message 命中这些关键词 → 标 pending，提醒用户拍板。
+# 黄灯(pending)：节点 message 命中这些关键词 → 标 pending，提醒用户操作。
+# 覆盖：拍板二选一、权限审批、确认放行等「流程卡住等你」的情况。
 # 注意：不要用「待选择」本身作关键词——助手描述看板状态时会误触。
 CHOICE_KEYWORDS = (
     "需要选择", "请你选择", "请选择", "需要你选", "需要你决定",
@@ -27,12 +28,28 @@ CHOICE_KEYWORDS = (
     "选 a", "选 b", "选择 a", "选择 b", "a 还是 b", "a或b",
     "二选一", "得你定", "等你决定", "等你的选择",
 )
+# 权限 / 审批 / 确认类（与拍板同一套黄灯语义）
+WAIT_KEYWORDS = CHOICE_KEYWORDS + (
+    "approval needed", "needs approval", "need approval",
+    "awaiting approval", "awaiting input", "waiting for approval",
+    "permission required", "permission request", "requires permission",
+    "需要审批", "等待审批", "需要授权", "等待授权", "需要允许",
+    "请批准", "请授权", "请允许", "请确认",
+    "等待你确认", "等你确认", "需要你确认", "需要你批准",
+    "需要你操作", "等你操作", "等你批准", "等你授权",
+    "需要你点", "请你批准", "请你授权", "请你确认",
+)
+
+
+def is_user_wait_message(message: str) -> bool:
+    """流程是否在等用户操作（拍板 / 审批 / 确认等）。"""
+    m = (message or "").lower()
+    return any(kw.lower() in m for kw in WAIT_KEYWORDS)
 
 
 def is_choice_message(message: str) -> bool:
-    """判断节点 message 是否包含'需要用户选择'的决策意图（忽略大小写）。"""
-    m = (message or "").lower()
-    return any(kw in m for kw in CHOICE_KEYWORDS)
+    """兼容旧名：等同 is_user_wait_message。"""
+    return is_user_wait_message(message)
 
 
 def _connect() -> sqlite3.Connection:

@@ -20,16 +20,23 @@
         "timeout": 15000
       }
     ],
+    "PermissionRequest": [
+      {
+        "command": "<repo_root>/.venv/bin/python <repo_root>/scripts/hook_report.py --agent reasonix",
+        "description": "ai-progress-monitor: tool permission → yellow pending",
+        "timeout": 15000
+      }
+    ],
     "PostToolUse": [
       {
         "command": "<repo_root>/.venv/bin/python <repo_root>/scripts/hook_report.py --agent reasonix",
-        "description": "ai-progress-monitor: heartbeat / ask answered"
+        "description": "ai-progress-monitor: heartbeat / resume after user wait"
       }
     ],
     "Notification": [
       {
         "command": "<repo_root>/.venv/bin/python <repo_root>/scripts/hook_report.py --agent reasonix",
-        "description": "ai-progress-monitor: approval/ask attention"
+        "description": "ai-progress-monitor: any user-attention wait → yellow"
       }
     ],
     "Stop": [

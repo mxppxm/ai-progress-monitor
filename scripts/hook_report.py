@@ -37,8 +37,9 @@ import notify  # noqa: E402
 # 新建空会话时注入：提醒模型用拍板用语 / ask 工具触发黄灯（hooks 路径无需 MCP 规则）
 _CHOICE_HINT = (
     "【进度看板】若需要用户拍板/二选一，请优先调用 ask 工具让用户点选；"
-    "或在回复里明确写上「需要你选择」或「你来决定」。看板会亮黄灯；"
-    "停止输出即视为本轮结束，用户继续对话会自动重启任务。"
+    "或在回复里明确写上「需要你选择」或「你来决定」。"
+    "工具权限/审批等卡住等用户操作时看板会亮黄灯；"
+    "用户继续对话或放行后会自动恢复运行。"
 )
 
 
@@ -382,11 +383,12 @@ def _handle_post_tool_use(agent: str, event: dict) -> dict:
     if existing.get("status") not in ("running", "pending"):
         return {"ok": True, "action": "skip", "reason": "not_active"}
     tool = _tool_name(event) or "tool"
-    # Reasonix：用户答完 ask → 黄灯收回为运行中
-    if tool.lower() == "ask":
-        if existing.get("status") == "pending":
-            return _resume_task(agent, task_id, existing)
-        return {"ok": True, "task_id": task_id, "action": "skip", "reason": "ask_done"}
+    # 黄灯等待中：ask 答完 / 权限批过之后工具继续跑 → 收回为运行中
+    if existing.get("status") == "pending":
+        resumed = _resume_task(agent, task_id, existing)
+        if tool.lower() == "ask":
+            return resumed
+        # 审批放行后的真实工具：继续记一条心跳
     msg = f"执行了 {tool}"
     log = db.log_node(task_id, "step", msg, {"tool": tool, "heartbeat": True})
     if log is None:
@@ -395,36 +397,76 @@ def _handle_post_tool_use(agent: str, event: dict) -> dict:
     return {"ok": True, "task_id": task_id, "action": "log_node", "node_type": "step"}
 
 
-def _handle_notification(agent: str, event: dict) -> dict:
-    """Reasonix Notification：仅当文案本身是拍板意图时亮黄灯。
-
-    工具审批（approval needed: bash …）不算用户二选一，避免误黄灯。
-    """
-    msg = str(event.get("message") or "").strip()
-    if not msg:
-        return {"ok": True, "action": "skip", "reason": "empty"}
+def _pending_user_wait(
+    agent: str,
+    event: dict,
+    msg: str,
+    *,
+    hook: str,
+    meta: dict | None = None,
+) -> dict:
+    """统一：卡住等用户操作 → 黄灯。"""
     task_id = _task_id_for(agent, event)
     existing = db.get_task(task_id)
     if existing is None:
         return {"ok": True, "action": "skip", "reason": "no_task"}
-    if not db.is_choice_message(msg):
-        # 审批类通知只刷新 detail，不改状态
-        db.update_progress(task_id, detail=msg[:500])
-        db.bump_version()
-        return {"ok": True, "task_id": task_id, "action": "detail"}
-    log = db.log_node(
-        task_id, "step", msg[:500],
-        {"hook": "Notification", "choice": True},
-    )
+    if existing.get("status") in ("done", "failed"):
+        if agent == "reasonix" and not _reasonix_session_tab_open(task_id):
+            return {"ok": True, "action": "skip", "reason": "already_ended"}
+        name = _task_name_for(agent, event, task_id)
+        db.record_task(task_id, agent, name, update_name=False)
+    text = (msg or "需要你操作").strip()[:500]
+    payload = {"hook": hook, "choice": True, "user_wait": True}
+    if meta:
+        payload.update(meta)
+    log = db.log_node(task_id, "step", text, payload)
     db.bump_version()
     if log is None:
         return {"ok": False, "error": "task 不存在"}
-    _notify_after_log(task_id, "step", msg[:500])
+    _notify_after_log(task_id, "step", text)
     return {"ok": True, "task_id": task_id, "action": "pending", "node_type": "step"}
 
 
+def _handle_notification(agent: str, event: dict) -> dict:
+    """Notification = 需要用户注意（审批 / 选择 / 确认）→ 一律黄灯。"""
+    msg = str(event.get("message") or "").strip()
+    if not msg:
+        return {"ok": True, "action": "skip", "reason": "empty"}
+    ntype = str(
+        event.get("notification_type")
+        or event.get("notificationType")
+        or ""
+    ).strip()
+    display = msg
+    if not db.is_user_wait_message(msg):
+        display = f"需要你操作：{msg}"
+    return _pending_user_wait(
+        agent, event, display,
+        hook="Notification",
+        meta={"notification_type": ntype} if ntype else None,
+    )
+
+
+def _handle_permission_request(agent: str, event: dict) -> dict:
+    """PermissionRequest = 工具权限弹窗卡住 → 黄灯（只观察，不代批/代拒）。"""
+    tool = _tool_name(event) or "tool"
+    subject = str(event.get("subject") or "").strip()
+    raw = str(event.get("message") or "").strip()
+    if raw:
+        msg = raw if db.is_user_wait_message(raw) else f"需要你批准：{raw}"
+    elif subject:
+        msg = f"需要你批准：{tool} — {subject[:200]}"
+    else:
+        msg = f"需要你批准：{tool}"
+    return _pending_user_wait(
+        agent, event, msg,
+        hook="PermissionRequest",
+        meta={"tool": tool},
+    )
+
+
 def _handle_after_agent_response(agent: str, event: dict) -> dict:
-    """助手一条消息写完：始终写入 detail（供看板展示末条）；含拍板用语 → 黄灯。"""
+    """助手一条消息写完：始终写入 detail（供看板展示末条）；等用户操作 → 黄灯。"""
     text = _assistant_text(event)
     if not text:
         return {"ok": True, "action": "skip", "reason": "empty"}
@@ -433,7 +475,7 @@ def _handle_after_agent_response(agent: str, event: dict) -> dict:
         # 无主会话（常见于 subagent）不建卡
         return {"ok": True, "action": "skip", "reason": "no_task"}
     msg = text[:500]
-    if db.is_choice_message(text):
+    if db.is_user_wait_message(text):
         log = db.log_node(task_id, "step", msg, {"hook": "AfterAgentResponse", "choice": True})
         db.bump_version()
         if log is None:
@@ -441,7 +483,7 @@ def _handle_after_agent_response(agent: str, event: dict) -> dict:
         _notify_after_log(task_id, "step", msg)
         return {"ok": True, "task_id": task_id, "action": "pending", "node_type": "step"}
 
-    # 非拍板：只更新 detail，不刷节点、不改状态
+    # 非等待：只更新 detail，不刷节点、不改状态
     updated = db.update_progress(task_id, detail=msg)
     db.bump_version()
     if updated is None:
@@ -474,9 +516,9 @@ def _handle_stop(agent: str, event: dict) -> dict:
     was_pending = bool(existing.get("status") == "pending")
     snippet = _stop_display_text(event, existing)
 
-    # 已因 afterAgentResponse 亮黄灯，或本条 stop 自带拍板文案 → 保持/设为 pending
-    if was_pending or db.is_choice_message(snippet):
-        msg = snippet or "等待你选择"
+    # 已因 afterAgentResponse 亮黄灯，或本条 stop 自带等待文案 → 保持/设为 pending
+    if was_pending or db.is_user_wait_message(snippet):
+        msg = snippet or "等待你操作"
         log = db.log_node(task_id, "step", msg, {"hook": "Stop", "choice": True})
         db.bump_version()
         if log is None:
@@ -563,6 +605,7 @@ _HANDLERS = {
     "Stop": _handle_stop,
     "SessionEnd": _handle_session_end,
     "Notification": _handle_notification,
+    "PermissionRequest": _handle_permission_request,
 }
 
 # 各工作台事件名 → 本脚本统一名
