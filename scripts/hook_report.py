@@ -97,6 +97,42 @@ def _task_id_for(agent: str, event: dict) -> str:
     return f"{agent}-{int(time.time())}"
 
 
+def _reasonix_open_tab_suffixes() -> set[str]:
+    """当前 Reasonix 桌面打开页签的会话后缀（读 desktop-tabs.json）。"""
+    path = Path.home() / ".reasonix" / "desktop-tabs.json"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return set()
+    tabs = data.get("tabs") if isinstance(data, dict) else None
+    if not isinstance(tabs, list):
+        return set()
+    out: set[str] = set()
+    for tab in tabs:
+        if not isinstance(tab, dict):
+            continue
+        raw = tab.get("sessionPath") or tab.get("session_path")
+        if isinstance(raw, str) and raw.strip():
+            out.add(_session_suffix(Path(raw).name))
+        topic = tab.get("topicId") or tab.get("topic_id")
+        if isinstance(topic, str) and topic.startswith("topic_"):
+            body = topic[len("topic_") :]
+            out.add(_session_suffix(body.split("_", 1)[0]))
+    return out
+
+
+def _reasonix_session_tab_open(task_id: str) -> bool:
+    """该 reasonix 任务对应的会话是否仍在桌面打开。"""
+    if not task_id.startswith("reasonix-"):
+        return False
+    sid = _session_suffix(task_id[len("reasonix-") :])
+    open_s = _reasonix_open_tab_suffixes()
+    if sid in open_s:
+        return True
+    short = sid.split(".", 1)[0]
+    return any(o.split(".", 1)[0] == short for o in open_s)
+
+
 def _resume_task(agent: str, task_id: str, existing: dict | None) -> dict:
     """把 pending 收回为 running（ask 已答）。"""
     name = (existing or {}).get("name") or f"{agent} 会话任务"
@@ -313,6 +349,13 @@ def _handle_pre_tool_use(agent: str, event: dict) -> dict:
         return {"ok": True, "action": "skip", "reason": "not_ask"}
     task_id = _task_id_for(agent, event)
     existing = db.get_task(task_id)
+    if existing and existing.get("status") in ("done", "failed"):
+        # 真关了的会话不再被迟到的 ask hook 救活；页签还在则允许恢复
+        if agent == "reasonix" and not _reasonix_session_tab_open(task_id):
+            return {"ok": True, "action": "skip", "reason": "already_ended"}
+        name = _task_name_for(agent, event, task_id)
+        db.record_task(task_id, agent, name, update_name=False)
+        existing = db.get_task(task_id)
     if existing is None:
         # ask 出现时通常已有会话；没有则建一张兜底卡
         name = _task_name_for(agent, event, task_id)
@@ -442,8 +485,10 @@ def _handle_stop(agent: str, event: dict) -> dict:
             _notify_after_log(task_id, "step", msg)
         return {"ok": True, "task_id": task_id, "action": "pending", "node_type": "step"}
 
-    # Reasonix：回合结束但会话还在 → 保持 running，只刷新末条
+    # Reasonix：回合结束但会话还在 → 保持 running，只刷新末条；已结束不再救活
     if agent == "reasonix":
+        if existing.get("status") not in ("running", "pending"):
+            return {"ok": True, "action": "skip", "reason": "already_ended"}
         if hook_status == "error":
             msg = snippet or "本轮出错"
             log = db.log_node(task_id, "fail", msg, {"hook": "Stop", "status": hook_status})
@@ -454,11 +499,6 @@ def _handle_stop(agent: str, event: dict) -> dict:
             return {"ok": True, "task_id": task_id, "action": "log_node", "node_type": "fail"}
         if snippet:
             db.update_progress(task_id, detail=snippet)
-            if existing.get("status") != "running":
-                db.record_task(
-                    task_id, agent, existing.get("name") or "reasonix 会话",
-                    update_name=False,
-                )
             db.bump_version()
         return {"ok": True, "task_id": task_id, "action": "turn_idle", "detail": snippet}
 
@@ -481,7 +521,13 @@ def _handle_stop(agent: str, event: dict) -> dict:
 
 
 def _handle_session_end(agent: str, event: dict) -> dict:
-    """关会话：已结束保持；pending/running 都标 done（会话真正关掉）。"""
+    """关会话：已结束保持；pending/running 都标 done（会话真正关掉）。
+
+    Reasonix Desktop 会在页签仍打开时误发 SessionEnd(reason=other)
+    （controller 重建等）。这种假结束直接忽略；真正收尾靠：
+    - SessionEnd reason=clear（/new）
+    - 页签已不在 desktop-tabs.json（含 watcher 补发的 tab_closed / app_quit）
+    """
     task_id = _task_id_for(agent, event)
     existing = db.get_task(task_id)
     if existing is None:
@@ -490,7 +536,15 @@ def _handle_session_end(agent: str, event: dict) -> dict:
     if st in ("done", "failed"):
         return {"ok": True, "task_id": task_id, "action": "keep", "status": st}
 
-    reason = event.get("reason") or "other"
+    reason = str(event.get("reason") or "other")
+    if agent == "reasonix" and reason == "other" and _reasonix_session_tab_open(task_id):
+        return {
+            "ok": True,
+            "task_id": task_id,
+            "action": "skip",
+            "reason": "spurious_session_end",
+        }
+
     msg = f"会话结束（{reason}）"
     log = db.log_node(task_id, "success", msg, {"hook": "SessionEnd", "reason": reason})
     db.bump_version()
