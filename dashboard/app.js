@@ -142,7 +142,7 @@
       ? `<button type="button" class="task-end" data-end="${escapeAttr(t.task_id)}" title="手动结束">结束</button>`
       : "";
     return `
-      <article class="task${cls}" data-id="${escapeAttr(t.task_id)}">
+      <article class="task${cls}" data-id="${escapeAttr(t.task_id)}" data-agent="${escapeAttr(t.agent)}" title="点击聚焦到 ${escapeAttr(t.agent)}">
         <div class="task-top">
           <span class="dot ${dotCls.trim()}"></span>
           <h3 class="task-name">${escapeHtml(t.name)}</h3>
@@ -155,6 +155,13 @@
           ${endBtn}
         </footer>
       </article>`;
+  }
+
+  async function focusAgent(agent) {
+    if (!agent) return;
+    try {
+      await fetch(`/api/focus/${encodeURIComponent(agent)}`, { method: "POST" });
+    } catch (_) {}
   }
 
   async function endTask(taskId) {
@@ -176,8 +183,12 @@
     const endBtn = e.target.closest(".task-end");
     if (endBtn) {
       e.preventDefault();
+      e.stopPropagation();
       endTask(endBtn.dataset.end);
+      return;
     }
+    const card = e.target.closest(".task");
+    if (card) focusAgent(card.dataset.agent);
   });
 
   async function clearAll() {

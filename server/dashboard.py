@@ -6,6 +6,7 @@
   GET /api/tasks/{id}/nodes  拉取某个任务的节点时间线
   POST /api/tasks/{id}/end   手动结束任务
   POST /api/tasks/clear      一键清空（永久删除全部任务）
+  POST /api/focus/{agent}    聚焦到对应工作台 App
   GET /api/stream SSE 实时推送：任务数据变更时自动 push
 
 启动：
@@ -23,6 +24,7 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 import db
+import focus
 
 app = FastAPI(title="AI Progress Monitor")
 
@@ -100,6 +102,15 @@ def unarchive_api(task_id: str):
 @app.get("/api/tasks/{task_id}/nodes")
 def task_nodes(task_id: str, limit: int = 100):
     return {"nodes": db.list_nodes(task_id, limit)}
+
+
+@app.post("/api/focus/{agent}")
+def focus_api(agent: str):
+    """点击看板任务：把对应工作台 App 拉到前台。"""
+    result = focus.focus_agent(agent)
+    if not result.get("ok"):
+        raise HTTPException(status_code=404, detail=result.get("error") or "focus failed")
+    return result
 
 
 @app.get("/api/stream")

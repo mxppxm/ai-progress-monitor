@@ -136,7 +136,7 @@ body {
   border-top: 2px solid var(--green);
   border-radius: 12px;
   padding: 16px 18px;
-  cursor: default;
+  cursor: pointer;
   transition: border-color .18s ease, box-shadow .18s ease;
   display: flex; flex-direction: column; gap: 8px;
 }
