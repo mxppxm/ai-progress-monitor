@@ -191,6 +191,16 @@ def end_task(task_id: str) -> dict | None:
         return dict(row)
 
 
+def clear_all_tasks() -> int:
+    """永久删除全部任务及其节点，返回删除的任务数。"""
+    with _LOCK, _connect() as conn:
+        row = conn.execute("SELECT COUNT(*) AS c FROM tasks").fetchone()
+        n = int(row["c"] if row else 0)
+        conn.execute("DELETE FROM nodes")
+        conn.execute("DELETE FROM tasks")
+    return n
+
+
 def archive_task(task_id: str) -> dict | None:
     """把任务标记为已存档，从运行/默认列表隐藏（保留历史）。"""
     now = time.time()

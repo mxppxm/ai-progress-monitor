@@ -5,6 +5,7 @@
   GET /api/tasks  拉取当前任务列表（JSON）
   GET /api/tasks/{id}/nodes  拉取某个任务的节点时间线
   POST /api/tasks/{id}/end   手动结束任务
+  POST /api/tasks/clear      一键清空（永久删除全部任务）
   GET /api/stream SSE 实时推送：任务数据变更时自动 push
 
 启动：
@@ -67,6 +68,15 @@ def end_api(task_id: str):
     db.bump_version()
     _publish()
     return {"ok": True, "task": t}
+
+
+@app.post("/api/tasks/clear")
+def clear_api():
+    """一键清空：永久删除全部任务与节点。"""
+    deleted = db.clear_all_tasks()
+    db.bump_version()
+    _publish()
+    return {"ok": True, "deleted": deleted}
 
 
 @app.post("/api/tasks/{task_id}/archive")

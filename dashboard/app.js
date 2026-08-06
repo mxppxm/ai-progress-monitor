@@ -4,6 +4,7 @@
   const empty = document.getElementById("empty");
   const badge = document.getElementById("conn-badge");
   const timeEl = document.getElementById("updated-at");
+  const clearBtn = document.getElementById("clear-btn");
 
   let tasks = [];
   const POLL_INTERVAL = 5000;
@@ -178,6 +179,18 @@
       endTask(endBtn.dataset.end);
     }
   });
+
+  async function clearAll() {
+    if (!confirm("确定清空全部任务？此操作不可恢复。")) return;
+    clearBtn.disabled = true;
+    try {
+      const res = await fetch("/api/tasks/clear", { method: "POST" });
+      if (!res.ok) return;
+      render([]);
+    } catch (_) {}
+    finally { clearBtn.disabled = false; }
+  }
+  clearBtn.addEventListener("click", clearAll);
 
   // ── utils ──
   function escapeHtml(s) {
