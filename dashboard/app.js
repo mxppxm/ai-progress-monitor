@@ -154,6 +154,9 @@
       if (agent) scrollMap[agent] = el.scrollTop;
     });
 
+    // 整板重绘会拆掉 tip 锚点，先收起，避免卡死在屏幕上
+    hideTip();
+
     board.innerHTML = agents.map(agent => {
       const pool = sortTasks((groups[agent] || []).slice());
       const run = pool.filter(isRunning).length;
@@ -404,32 +407,49 @@
 
   let tipAnchor = null;
   let tipTimer = null;
-  let overTip = false;
-  const TIP_SHOW_MS = 480;
-  const TIP_HIDE_MS = 180;
+  let tipPending = null; // 正在倒计时展示的锚点，避免 mouseover 反复重置
+  let tipPtr = { x: 0, y: 0 };
+  const TIP_SHOW_MS = 200;
+  const TIP_HIDE_MS = 120;
 
   function hideTip() {
     clearTimeout(tipTimer);
     tipTimer = null;
+    tipPending = null;
     tipAnchor = null;
-    overTip = false;
     tipEl.classList.remove("show");
     tipEl.textContent = "";
   }
 
+  function nodeUnderPointer(node) {
+    if (!node || !node.isConnected) return false;
+    const stack = document.elementsFromPoint(tipPtr.x, tipPtr.y);
+    return stack.some(n => n === node || node.contains(n));
+  }
+
+  function tipStillWanted() {
+    if (nodeUnderPointer(tipEl)) return true;
+    if (tipAnchor && tipAnchor.isConnected && nodeUnderPointer(tipAnchor)) return true;
+    return false;
+  }
+
   function scheduleHide() {
     clearTimeout(tipTimer);
+    tipPending = null;
     tipTimer = setTimeout(() => {
-      if (overTip) return;
-      if (tipAnchor && tipAnchor.matches(":hover")) return;
+      if (tipStillWanted()) return;
       hideTip();
     }, TIP_HIDE_MS);
   }
 
   function scheduleShow(anchor) {
+    // 同一锚点已在倒计时 → 不重置，解决边界抖动「不灵敏」
+    if (tipPending === anchor && tipTimer) return;
     clearTimeout(tipTimer);
+    tipPending = anchor;
     tipTimer = setTimeout(() => {
-      if (!anchor.isConnected || !anchor.matches(":hover")) return;
+      tipPending = null;
+      if (!anchor.isConnected || !nodeUnderPointer(anchor)) return;
       showTip(anchor);
     }, TIP_SHOW_MS);
   }
@@ -453,6 +473,7 @@
     const text = (anchor.getAttribute("data-tip") || "").trim();
     if (!text) return;
     clearTimeout(tipTimer);
+    tipPending = null;
     tipAnchor = anchor;
     tipEl.textContent = text;
     placeTip(anchor);
@@ -465,43 +486,68 @@
     return false;
   }
 
-  board.addEventListener("mouseover", e => {
+  document.addEventListener("pointermove", e => {
+    tipPtr.x = e.clientX;
+    tipPtr.y = e.clientY;
+  }, { passive: true });
+
+  board.addEventListener("pointerover", e => {
+    tipPtr.x = e.clientX;
+    tipPtr.y = e.clientY;
     const el = e.target.closest(".tippable");
     if (!el || !board.contains(el)) return;
     if (tipAnchor === el && tipEl.classList.contains("show")) {
       clearTimeout(tipTimer);
+      tipPending = null;
+      return;
+    }
+    // 已显示时换到另一锚点：立刻切换，不必再等
+    if (tipEl.classList.contains("show") && tipAnchor && tipAnchor !== el) {
+      showTip(el);
       return;
     }
     scheduleShow(el);
   });
 
-  board.addEventListener("mouseout", e => {
+  board.addEventListener("pointerout", e => {
+    tipPtr.x = e.clientX;
+    tipPtr.y = e.clientY;
     const el = e.target.closest(".tippable");
     if (!el) return;
+    // 仍在同一 tippable 内部移动（子节点之间）→ 忽略
+    if (e.relatedTarget instanceof Node && el.contains(e.relatedTarget)) return;
+
     // 还在延迟展示中就离开 → 取消弹出
-    if (tipAnchor !== el && !tipEl.classList.contains("show")) {
+    if (tipPending === el && !tipEl.classList.contains("show")) {
       if (relatedInsideTipArea(e.relatedTarget)) return;
       clearTimeout(tipTimer);
       tipTimer = null;
+      tipPending = null;
       return;
     }
     if (el !== tipAnchor) return;
     if (relatedInsideTipArea(e.relatedTarget)) {
       clearTimeout(tipTimer);
+      tipPending = null;
       return;
     }
     scheduleHide();
   });
 
-  tipEl.addEventListener("mouseenter", () => {
-    overTip = true;
+  tipEl.addEventListener("pointerenter", () => {
     clearTimeout(tipTimer);
+    tipPending = null;
   });
-  tipEl.addEventListener("mouseleave", e => {
-    overTip = false;
+  tipEl.addEventListener("pointerleave", e => {
+    tipPtr.x = e.clientX;
+    tipPtr.y = e.clientY;
     if (relatedInsideTipArea(e.relatedTarget)) return;
     scheduleHide();
   });
+
+  // 指针离开窗口 / 失焦时强制收起，兜底「不消失」
+  document.documentElement.addEventListener("pointerleave", hideTip);
+  window.addEventListener("blur", hideTip);
 
   board.addEventListener("scroll", hideTip, true);
   window.addEventListener("scroll", hideTip, true);
