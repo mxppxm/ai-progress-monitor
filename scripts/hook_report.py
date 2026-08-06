@@ -43,6 +43,24 @@ _CHOICE_HINT = (
 
 
 # ── 事件 → 上报动作 ──────────────────────────────────────────────
+def _session_suffix(sid: str) -> str:
+    """从 session id 抽出够用的短后缀。
+
+    Cursor/Codex 的 UUID 取前 8 位即可。
+    Reasonix 形如 `20260806-093355.623048000-fxb-...`，前 8 位只是日期，
+    同一天新开会话会撞同一个 task_id；改用到小数点前的 `YYYYMMDD-HHMMSS`。
+    """
+    s = str(sid).strip()
+    if (
+        len(s) >= 15
+        and s[8] == "-"
+        and s[:8].isdigit()
+        and s[9:15].isdigit()
+    ):
+        return s.split(".", 1)[0]
+    return s[:8]
+
+
 def _task_id_for(agent: str, event: dict) -> str:
     """尽量从 hook 上下文里抽一个稳定的任务 ID。"""
     explicit = event.get("task_id")
@@ -50,7 +68,7 @@ def _task_id_for(agent: str, event: dict) -> str:
         return explicit
     sid = event.get("session_id")
     if sid:
-        return f"{agent}-{sid[:8]}"
+        return f"{agent}-{_session_suffix(sid)}"
     import time
     return f"{agent}-{int(time.time())}"
 
