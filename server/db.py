@@ -5,6 +5,7 @@
 """
 import json
 import os
+import re
 import sqlite3
 import threading
 import time
@@ -41,10 +42,34 @@ WAIT_KEYWORDS = CHOICE_KEYWORDS + (
     "请你批准", "请你授权", "请你确认",
 )
 
+# 引号/代码里的词只是「在提这个词」，不是正在问用户；匹配前先剥掉。
+_MENTION_QUOTE_RE = re.compile(
+    r"「[^」]*」|『[^』]*』|"
+    r"“[^”]*”|‘[^’]*’|"
+    r'"[^"]*"|\'[^\']*\'|'
+    r"`[^`]*`"
+)
+
+
+def _text_for_wait_detect(message: str) -> str:
+    """去掉引用提及后，再做黄灯关键词匹配。"""
+    return _MENTION_QUOTE_RE.sub(" ", message or "").lower()
+
+
+def _is_board_meta_talk(message: str) -> bool:
+    """在解释进度看板/黄灯机制，而不是真的卡在等用户。"""
+    raw = message or ""
+    m = raw.lower()
+    about_board = ("进度看板" in raw) or ("看板" in raw and "黄灯" in raw)
+    about_mechanics = any(k in m for k in ("误触", "关键词", "false positive", "pending"))
+    return about_board or (about_mechanics and "黄灯" in raw)
+
 
 def is_user_wait_message(message: str) -> bool:
     """流程是否在等用户操作（拍板 / 审批 / 确认等）。"""
-    m = (message or "").lower()
+    if _is_board_meta_talk(message):
+        return False
+    m = _text_for_wait_detect(message)
     return any(kw.lower() in m for kw in WAIT_KEYWORDS)
 
 
