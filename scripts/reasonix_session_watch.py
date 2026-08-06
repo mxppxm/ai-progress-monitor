@@ -132,12 +132,38 @@ def extract_ask_results(obj: dict) -> set[str]:
     for m in msgs:
         if not isinstance(m, dict):
             continue
-        if m.get("role") not in ("tool", "function"):
+        role = m.get("role")
+        name = m.get("name")
+        content = m.get("content")
+        # Reasonix：role=tool name=ask，content 含 The user answered
+        is_ask_result = (
+            role in ("tool", "function")
+            and (
+                name == "ask"
+                or (
+                    isinstance(content, str)
+                    and "The user answered" in content
+                )
+            )
+        )
+        if role not in ("tool", "function") and not is_ask_result:
             continue
-        for key in ("tool_call_id", "toolCallId", "id"):
-            v = m.get(key)
-            if v:
-                ids.add(str(v))
+        if name == "ask" or (
+            isinstance(content, str) and "The user answered" in content
+        ):
+            for key in ("tool_call_id", "toolCallId", "id"):
+                v = m.get(key)
+                if v:
+                    ids.add(str(v))
+                    break
+            else:
+                # 无 id 时用占位，配合「任意 pending ask」收回
+                ids.add("__ask_answered__")
+        else:
+            for key in ("tool_call_id", "toolCallId", "id"):
+                v = m.get(key)
+                if v:
+                    ids.add(str(v))
     return ids
 
 
@@ -239,6 +265,14 @@ def scan_file(path: Path, st: dict) -> None:
 
         for cid in extract_ask_results(obj):
             asks = meta.setdefault("asks", {})
+            if cid == "__ask_answered__":
+                # 收回所有仍 pending 的 ask
+                for prev in asks.values():
+                    if prev.get("pending") and not prev.get("answered"):
+                        report_ask(sid, cwd, {}, answered=True)
+                        prev["answered"] = True
+                        prev["pending"] = False
+                continue
             prev = asks.get(cid)
             if prev and prev.get("pending") and not prev.get("answered"):
                 report_ask(sid, cwd, {}, answered=True)

@@ -47,18 +47,31 @@ def _session_suffix(sid: str) -> str:
     """从 session id 抽出够用的短后缀。
 
     Cursor/Codex 的 UUID 取前 8 位即可。
-    Reasonix 形如 `20260806-093355.623048000-fxb-...`，前 8 位只是日期，
-    同一天新开会话会撞同一个 task_id；改用到小数点前的 `YYYYMMDD-HHMMSS`。
+    Reasonix BranchID 形如 `20260806-094200.479088000-fxb-deepseek-v4-flash`：
+    保留到小数秒 `YYYYMMDD-HHMMSS.fffffffff`，同一会话稳定且同秒不撞车。
     """
     s = str(sid).strip()
-    if (
-        len(s) >= 15
-        and s[8] == "-"
-        and s[:8].isdigit()
-        and s[9:15].isdigit()
-    ):
-        return s.split(".", 1)[0]
+    m = re.match(r"^(\d{8}-\d{6}\.\d+)", s)
+    if m:
+        return m.group(1)
+    m = re.match(r"^(\d{8}-\d{6})", s)
+    if m:
+        return m.group(1)
     return s[:8]
+
+
+def _reasonix_fallback_task_id(event: dict) -> str | None:
+    """hooks 偶发缺 sessionId 时，复用最近活跃的 reasonix 任务，避免每轮新卡。"""
+    try:
+        for t in db.list_tasks(limit=50):
+            if t.get("agent") != "reasonix":
+                continue
+            if t.get("status") not in ("running", "pending"):
+                continue
+            return t["task_id"]
+    except Exception:
+        return None
+    return None
 
 
 def _task_id_for(agent: str, event: dict) -> str:
@@ -68,9 +81,28 @@ def _task_id_for(agent: str, event: dict) -> str:
         return explicit
     sid = event.get("session_id")
     if sid:
-        return f"{agent}-{_session_suffix(sid)}"
+        suffix = _session_suffix(sid)
+        tid = f"{agent}-{suffix}"
+        # Reasonix：兼容旧卡（只有到秒、无小数段）
+        if agent == "reasonix" and "." in suffix:
+            short = f"{agent}-{suffix.split('.', 1)[0]}"
+            if db.get_task(short) and not db.get_task(tid):
+                return short
+        return tid
+    if agent == "reasonix":
+        fb = _reasonix_fallback_task_id(event)
+        if fb:
+            return fb
     import time
     return f"{agent}-{int(time.time())}"
+
+
+def _resume_task(agent: str, task_id: str, existing: dict | None) -> dict:
+    """把 pending 收回为 running（ask 已答）。"""
+    name = (existing or {}).get("name") or f"{agent} 会话任务"
+    db.record_task(task_id, agent, name, update_name=False)
+    db.bump_version()
+    return {"ok": True, "task_id": task_id, "action": "resume"}
 
 
 def _user_prompt(event: dict) -> str:
@@ -307,12 +339,11 @@ def _handle_post_tool_use(agent: str, event: dict) -> dict:
     if existing.get("status") not in ("running", "pending"):
         return {"ok": True, "action": "skip", "reason": "not_active"}
     tool = _tool_name(event) or "tool"
-    # Reasonix：用户答完 ask 后继续干活 → 黄灯收回为运行中
-    if tool.lower() == "ask" and existing.get("status") == "pending":
-        db.record_task(task_id, agent, existing.get("name") or f"{agent} 会话任务",
-                       update_name=False)
-        db.bump_version()
-        return {"ok": True, "task_id": task_id, "action": "resume", "tool": "ask"}
+    # Reasonix：用户答完 ask → 黄灯收回为运行中
+    if tool.lower() == "ask":
+        if existing.get("status") == "pending":
+            return _resume_task(agent, task_id, existing)
+        return {"ok": True, "task_id": task_id, "action": "skip", "reason": "ask_done"}
     msg = f"执行了 {tool}"
     log = db.log_node(task_id, "step", msg, {"tool": tool, "heartbeat": True})
     if log is None:
@@ -387,7 +418,11 @@ def _stop_display_text(event: dict, existing: dict | None) -> str:
 
 
 def _handle_stop(agent: str, event: dict) -> dict:
-    """停止输出＝本轮结束：默认 success/done；末条含拍板用语或已 pending → 黄灯。"""
+    """停止输出＝本轮结束。
+
+    Reasonix 一个会话一张卡：Stop 只更新 detail / 保持黄灯，不标 done；
+    真正结束交给 SessionEnd。其它工作台仍是 Stop → done。
+    """
     task_id = _task_id_for(agent, event)
     existing = db.get_task(task_id)
     if existing is None:
@@ -406,6 +441,26 @@ def _handle_stop(agent: str, event: dict) -> dict:
         if not was_pending:
             _notify_after_log(task_id, "step", msg)
         return {"ok": True, "task_id": task_id, "action": "pending", "node_type": "step"}
+
+    # Reasonix：回合结束但会话还在 → 保持 running，只刷新末条
+    if agent == "reasonix":
+        if hook_status == "error":
+            msg = snippet or "本轮出错"
+            log = db.log_node(task_id, "fail", msg, {"hook": "Stop", "status": hook_status})
+            db.bump_version()
+            if log is None:
+                return {"ok": False, "error": "task 不存在"}
+            _notify_after_log(task_id, "fail", msg)
+            return {"ok": True, "task_id": task_id, "action": "log_node", "node_type": "fail"}
+        if snippet:
+            db.update_progress(task_id, detail=snippet)
+            if existing.get("status") != "running":
+                db.record_task(
+                    task_id, agent, existing.get("name") or "reasonix 会话",
+                    update_name=False,
+                )
+            db.bump_version()
+        return {"ok": True, "task_id": task_id, "action": "turn_idle", "detail": snippet}
 
     if hook_status == "error":
         msg = snippet or "本轮出错结束"
@@ -426,13 +481,13 @@ def _handle_stop(agent: str, event: dict) -> dict:
 
 
 def _handle_session_end(agent: str, event: dict) -> dict:
-    """关会话：已结束/待选择保持；仍在 running 则标 done（等同停输出）。"""
+    """关会话：已结束保持；pending/running 都标 done（会话真正关掉）。"""
     task_id = _task_id_for(agent, event)
     existing = db.get_task(task_id)
     if existing is None:
         return {"ok": True, "action": "skip", "reason": "no task"}
     st = existing.get("status")
-    if st in ("done", "failed", "pending"):
+    if st in ("done", "failed"):
         return {"ok": True, "task_id": task_id, "action": "keep", "status": st}
 
     reason = event.get("reason") or "other"
