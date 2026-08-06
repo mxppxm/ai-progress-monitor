@@ -12,10 +12,23 @@
         "description": "ai-progress-monitor: start/restart task"
       }
     ],
+    "PreToolUse": [
+      {
+        "match": "ask",
+        "command": "<repo_root>/.venv/bin/python <repo_root>/scripts/hook_report.py --agent reasonix",
+        "description": "ai-progress-monitor: ask → yellow pending"
+      }
+    ],
     "PostToolUse": [
       {
         "command": "<repo_root>/.venv/bin/python <repo_root>/scripts/hook_report.py --agent reasonix",
-        "description": "ai-progress-monitor: heartbeat"
+        "description": "ai-progress-monitor: heartbeat / ask answered"
+      }
+    ],
+    "Notification": [
+      {
+        "command": "<repo_root>/.venv/bin/python <repo_root>/scripts/hook_report.py --agent reasonix",
+        "description": "ai-progress-monitor: approval/ask attention"
       }
     ],
     "Stop": [

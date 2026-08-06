@@ -95,7 +95,8 @@ sed "s|<repo_root>|$REPO|g" "$REPO/client-configs/reasonix-hooks.json" \
 生效：**重启 Reasonix**（hooks 在会话构建时加载；`/new` 不会重读配置）。也可在桌面端「设置 → Hooks」确认全局配置已写入。
 
 事件：`SessionStart`（只注入黄灯提示）/ `UserPromptSubmit`（建/重启任务）/
-`PostToolUse` / `Stop` / `SubagentStop` / `SessionEnd`。
+`PreToolUse(ask)`（选择卡 → 黄灯）/ `PostToolUse` / `Notification` /
+`Stop` / `SubagentStop` / `SessionEnd`。
 
 ### Clacky
 

@@ -34,10 +34,11 @@ if str(SERVER_DIR) not in sys.path:
 import db  # noqa: E402
 import notify  # noqa: E402
 
-# 新建空会话时注入：提醒模型用拍板用语触发黄灯（hooks 路径无需 MCP 规则）
+# 新建空会话时注入：提醒模型用拍板用语 / ask 工具触发黄灯（hooks 路径无需 MCP 规则）
 _CHOICE_HINT = (
-    "【进度看板】若需要用户拍板/二选一，请在回复里明确写上「需要你选择」或「你来决定」，"
-    "看板会亮黄灯；停止输出即视为本轮结束，用户继续对话会自动重启任务。"
+    "【进度看板】若需要用户拍板/二选一，请优先调用 ask 工具让用户点选；"
+    "或在回复里明确写上「需要你选择」或「你来决定」。看板会亮黄灯；"
+    "停止输出即视为本轮结束，用户继续对话会自动重启任务。"
 )
 
 
@@ -209,6 +210,72 @@ def _handle_inject_hint(agent: str, event: dict) -> dict:
     }
 
 
+def _tool_name(event: dict) -> str:
+    return str(event.get("tool_name") or event.get("toolName") or "").strip()
+
+
+def _tool_args(event: dict) -> dict:
+    raw = event.get("tool_args")
+    if raw is None:
+        raw = event.get("toolArgs")
+    if isinstance(raw, dict):
+        return raw
+    if isinstance(raw, str) and raw.strip():
+        try:
+            parsed = json.loads(raw)
+            return parsed if isinstance(parsed, dict) else {}
+        except json.JSONDecodeError:
+            return {}
+    return {}
+
+
+def _ask_summary(event: dict) -> str:
+    """从 Reasonix ask 工具参数抽出可读的待选摘要。"""
+    args = _tool_args(event)
+    questions = args.get("questions") or []
+    parts: list[str] = []
+    if isinstance(questions, list):
+        for q in questions[:3]:
+            if not isinstance(q, dict):
+                continue
+            prompt = str(q.get("question") or q.get("header") or "").strip()
+            opts = q.get("options") or []
+            labels = []
+            if isinstance(opts, list):
+                for o in opts[:4]:
+                    if isinstance(o, dict) and o.get("label"):
+                        labels.append(str(o["label"]).strip())
+                    elif isinstance(o, str) and o.strip():
+                        labels.append(o.strip())
+            if prompt and labels:
+                parts.append(f"{prompt}（{' / '.join(labels)}）")
+            elif prompt:
+                parts.append(prompt)
+    if parts:
+        return "需要你选择：" + "；".join(parts)
+    return "需要你选择"
+
+
+def _handle_pre_tool_use(agent: str, event: dict) -> dict:
+    """工具执行前：Reasonix ask 弹选择卡 → 立刻黄灯。"""
+    tool = _tool_name(event).lower()
+    if tool != "ask":
+        return {"ok": True, "action": "skip", "reason": "not_ask"}
+    task_id = _task_id_for(agent, event)
+    existing = db.get_task(task_id)
+    if existing is None:
+        # ask 出现时通常已有会话；没有则建一张兜底卡
+        name = _task_name_for(agent, event, task_id)
+        db.record_task(task_id, agent, name)
+    msg = _ask_summary(event)[:500]
+    log = db.log_node(task_id, "step", msg, {"hook": "PreToolUse", "tool": "ask", "choice": True})
+    db.bump_version()
+    if log is None:
+        return {"ok": False, "error": "task 不存在"}
+    _notify_after_log(task_id, "step", msg)
+    return {"ok": True, "task_id": task_id, "action": "pending", "node_type": "step"}
+
+
 def _handle_post_tool_use(agent: str, event: dict) -> dict:
     """工具心跳：只更新已有 running/pending 任务，绝不新建。
 
@@ -221,13 +288,48 @@ def _handle_post_tool_use(agent: str, event: dict) -> dict:
         return {"ok": True, "action": "skip", "reason": "no_task"}
     if existing.get("status") not in ("running", "pending"):
         return {"ok": True, "action": "skip", "reason": "not_active"}
-    tool = event.get("tool_name") or "tool"
+    tool = _tool_name(event) or "tool"
+    # Reasonix：用户答完 ask 后继续干活 → 黄灯收回为运行中
+    if tool.lower() == "ask" and existing.get("status") == "pending":
+        db.record_task(task_id, agent, existing.get("name") or f"{agent} 会话任务",
+                       update_name=False)
+        db.bump_version()
+        return {"ok": True, "task_id": task_id, "action": "resume", "tool": "ask"}
     msg = f"执行了 {tool}"
     log = db.log_node(task_id, "step", msg, {"tool": tool, "heartbeat": True})
     if log is None:
         return {"ok": False, "error": "task 不存在"}
     # 心跳不 bump：避免 SSE 高频整板重绘
     return {"ok": True, "task_id": task_id, "action": "log_node", "node_type": "step"}
+
+
+def _handle_notification(agent: str, event: dict) -> dict:
+    """Reasonix Notification：等待审批/选择时也亮黄灯。"""
+    msg = str(event.get("message") or "").strip()
+    if not msg:
+        return {"ok": True, "action": "skip", "reason": "empty"}
+    task_id = _task_id_for(agent, event)
+    existing = db.get_task(task_id)
+    if existing is None:
+        return {"ok": True, "action": "skip", "reason": "no_task"}
+    # 审批/选择类通知 → pending；其余仅更新 detail
+    choice = db.is_choice_message(msg) or any(
+        k in msg.lower() for k in ("approval", "approve", "ask", "选择", "审批", "确认")
+    )
+    if not choice:
+        db.update_progress(task_id, detail=msg[:500])
+        db.bump_version()
+        return {"ok": True, "task_id": task_id, "action": "detail"}
+    detail = msg if db.is_choice_message(msg) else f"需要你选择：{msg}"
+    log = db.log_node(
+        task_id, "step", detail[:500],
+        {"hook": "Notification", "choice": True},
+    )
+    db.bump_version()
+    if log is None:
+        return {"ok": False, "error": "task 不存在"}
+    _notify_after_log(task_id, "step", detail[:500])
+    return {"ok": True, "task_id": task_id, "action": "pending", "node_type": "step"}
 
 
 def _handle_after_agent_response(agent: str, event: dict) -> dict:
@@ -329,10 +431,12 @@ def _handle_session_end(agent: str, event: dict) -> dict:
 _HANDLERS = {
     "SessionStart": _handle_session_start,
     "InjectHint": _handle_inject_hint,
+    "PreToolUse": _handle_pre_tool_use,
     "PostToolUse": _handle_post_tool_use,
     "AfterAgentResponse": _handle_after_agent_response,
     "Stop": _handle_stop,
     "SessionEnd": _handle_session_end,
+    "Notification": _handle_notification,
 }
 
 # 各工作台事件名 → 本脚本统一名
@@ -370,6 +474,11 @@ def _normalize_event(event: dict) -> dict:
             out["session_id"] = out["conversation_id"]
         elif out.get("sessionId"):
             out["session_id"] = out["sessionId"]
+    # Reasonix camelCase 工具字段
+    if not out.get("tool_name") and out.get("toolName"):
+        out["tool_name"] = out["toolName"]
+    if out.get("tool_args") is None and out.get("toolArgs") is not None:
+        out["tool_args"] = out["toolArgs"]
     # Cursor: workspace_roots[0] 可当 cwd
     if not out.get("cwd"):
         roots = out.get("workspace_roots") or []
