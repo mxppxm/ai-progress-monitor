@@ -67,7 +67,29 @@ hooks = true
 
 ### OpenCode
 
-Hooks 支持有限 → **改走 MCP 安装文档**（同目录 `mcp.md`），不要硬挂 hooks。
+OpenCode 无 `hook` 配置字段，事件挂钩走 **插件系统**：把 `$REPO/client-configs/opencode-plugin.js`
+复制为 `~/.config/opencode/plugins/ai-progress-report.js`（插件内部调用 `hook_report.py --agent opencode`）。
+
+```bash
+mkdir -p ~/.config/opencode/plugins
+cp "$REPO/client-configs/opencode-plugin.js" ~/.config/opencode/plugins/ai-progress-report.js
+```
+
+生效：**重启 OpenCode**（插件在启动时加载）。已运行的旧会话不回补历史，下次会话自动上报。
+
+事件映射：`message.updated(user)` → SessionStart（建/重启+改标题）；`session.status(idle)` → Stop；
+`tool.execute.after` → PostToolUse 心跳；`session.deleted` → SessionEnd。
+
+### Clacky
+
+Clacky **无原生会话生命周期 hooks**（不提供 `SessionStart`/`Stop` 事件自动触发）。接入方式：
+
+1. 挂载 MCP（见 `mcp.md`）：`~/.clacky/mcp.json` 的 `mcpServers.ai-progress-monitor` 已配好。
+2. 长期记忆固化：把「会话内固定上报清单」写入 `~/.clacky/memories/ai-progress-monitor.md`，
+   使每个 Clacky 会话**强制加载并执行**自报，实现近似自动上报。
+3. 模板：`$REPO/client-configs/clacky-hooks.json`（经 `hook_report.py --agent clacky` 统一语义执行）。
+
+生效依赖 Clacky 会话内遵守清单（非系统事件驱动），工具/入口不可用时静默跳过、不阻塞主任务。
 
 ## 四、语义（写入后自动生效，无需再写规则）
 

@@ -1,6 +1,6 @@
 # AI 工作台进度监控 (ai-progress-monitor)
 
-统一看板：多工作台（Cursor / Claude / Codex / OpenCode…）通过 **Hooks**（推荐）或 **MCP** 上报进度，网页实时查看（http://127.0.0.1:8777），关键节点会弹 macOS 通知。
+统一看板：多工作台（Cursor / Claude / Codex / OpenCode…）通过 **Hooks / 插件**（推荐）或 **MCP** 上报进度，网页实时查看（http://127.0.0.1:8777），关键节点会弹 macOS 通知。
 
 ---
 
@@ -35,7 +35,7 @@ GitHub：
 请根据 https://raw.githubusercontent.com/mxppxm/ai-progress-monitor/main/install/hooks.md，安装 hooks。
 ```
 
-### MCP（兜底 · OpenCode 或 hooks 不可用时）
+### MCP（兜底 · Hooks / 插件不可用时）
 
 ```
 请根据 <repo>/install/mcp.md，安装 mcp。
@@ -64,7 +64,7 @@ GitHub：
 
 | 能力 | 说明 |
 | :--- | :--- |
-| Hooks 自动上报 | `scripts/hook_report.py`（Cursor / Claude / Codex） |
+| Hooks / 插件自动上报 | `scripts/hook_report.py`（Cursor / Claude / Codex / OpenCode 插件） |
 | MCP 上报 | `record_task` / `update_progress` / `log_node` / `list_tasks` |
 | 三态卡片 | 运行中 · 待选择（黄灯）· 已结束；标题随新提示词更新 |
 | 实时看板 | SSE + 断线轮询兜底 |

@@ -1,0 +1,45 @@
+{
+  "agent": "clacky",
+  "mode": "session-self-report",
+  "_comment": "Clacky 无 Claude Code 式 SessionStart/Stop 事件 hooks，故用「会话内固定执行清单」+ 长期记忆固化，实现近似自动上报。执行入口统一走 hook_report.py --agent clacky 通用 CLI 语义。",
+  "entrypoint": "/Users/mico/clacky_workspace/ai-progress-monitor/.venv/bin/python /Users/mico/clacky_workspace/ai-progress-monitor/scripts/hook_report.py --agent clacky --task_id <task_id> --name <name> --event <Event> --message <msg>",
+  "session_contract": [
+    {
+      "when": "会话开始 / 接长任务 / 用户新提示词",
+      "act": "record_task",
+      "event": "SessionStart",
+      "rule": "task_id=clacky-短序号, agent=clacky, name=本轮用户提示词摘要",
+      "cmd": "hook_report.py --agent clacky --event SessionStart --task_id clacky-XXX --name 任务名"
+    },
+    {
+      "when": "阶段推进",
+      "act": "update_progress",
+      "rule": "stage=coding/testing/deploying, progress=0-100"
+    },
+    {
+      "when": "重要节点",
+      "act": "log_node",
+      "event": "PostToolUse",
+      "node_type": "step|milestone",
+      "message": "中文简述"
+    },
+    {
+      "when": "需人类拍板",
+      "act": "log_node",
+      "rule": "message 含「需要选择 / 你来决定」→ 看板黄灯"
+    },
+    {
+      "when": "完成 / 失败",
+      "act": "log_node",
+      "event": "Stop",
+      "node_type": "success|fail",
+      "message": "收尾说明"
+    },
+    {
+      "when": "会话结束",
+      "act": "若仍 running 则标 done",
+      "event": "SessionEnd"
+    }
+  ],
+  "reliability_note": "系统不自动触发，靠本清单 + 长期记忆 (ai-progress-monitor.md) 在每个会话强制加载并执行。工具/入口不可用时静默跳过，不阻塞主任务。"
+}
