@@ -135,8 +135,11 @@
     if (renderKey === lastRenderKey && board.children.length) {
       // 轻量刷新卡片时间戳
       tasks.forEach(t => {
-        const span = board.querySelector(`.task[data-id="${CSS.escape(t.task_id)}"] .task-foot > span:first-child`);
-        if (span) span.textContent = ftime(t.updated_at);
+        const span = board.querySelector(`.task[data-id="${CSS.escape(t.task_id)}"] .task-time`);
+        if (span) {
+          span.textContent = ftime(t.updated_at);
+          span.className = timeClass(t.updated_at);
+        }
       });
       return;
     }
@@ -246,7 +249,7 @@
         </div>
         ${detailHtml}
         <footer class="task-foot">
-          <span>${ftime(t.updated_at)}</span>
+          <span class="${timeClass(t.updated_at)}">${ftime(t.updated_at)}</span>
           ${endBtn}
         </footer>
       </article>`;
@@ -509,6 +512,15 @@
       ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
   }
   function escapeAttr(s) { return String(s ?? "").replace(/"/g, "&quot;"); }
+  const FRESH_MIN = 20;
+  function isFreshTime(ts) {
+    if (!ts) return false;
+    const diffMin = (Date.now() - ts * 1000) / 60000;
+    return diffMin >= 0 && diffMin <= FRESH_MIN;
+  }
+  function timeClass(ts) {
+    return isFreshTime(ts) ? "task-time task-time--fresh" : "task-time";
+  }
   function ftime(ts) {
     if (!ts) return "—";
     const d = new Date(ts * 1000);
