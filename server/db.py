@@ -29,15 +29,16 @@ CHOICE_KEYWORDS = (
     "二选一", "得你定", "等你决定", "等你的选择",
 )
 # 权限 / 审批 / 确认类（与拍板同一套黄灯语义）
+# 注意：不要用「等你操作」——解释看板时写「卡住等你操作」会误触（同「待选择」）。
 WAIT_KEYWORDS = CHOICE_KEYWORDS + (
     "approval needed", "needs approval", "need approval",
     "awaiting approval", "awaiting input", "waiting for approval",
     "permission required", "permission request", "requires permission",
     "需要审批", "等待审批", "需要授权", "等待授权", "需要允许",
-    "请批准", "请授权", "请允许", "请确认",
+    "请批准", "请授权", "请允许",
     "等待你确认", "等你确认", "需要你确认", "需要你批准",
-    "需要你操作", "等你操作", "等你批准", "等你授权",
-    "需要你点", "请你批准", "请你授权", "请你确认",
+    "需要你操作", "等你批准", "等你授权",
+    "请你批准", "请你授权", "请你确认",
 )
 
 
