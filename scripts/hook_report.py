@@ -503,10 +503,10 @@ def _stop_display_text(event: dict, existing: dict | None) -> str:
 
 
 def _handle_stop(agent: str, event: dict) -> dict:
-    """停止输出＝本轮结束。
+    """停止输出＝本轮结束 → done；拍板/等待文案 → pending。
 
-    Reasonix 一个会话一张卡：Stop 只更新 detail / 保持黄灯，不标 done；
-    真正结束交给 SessionEnd。其它工作台仍是 Stop → done。
+    同一 sessionId 复用一张卡：下一轮 UserPromptSubmit 会把 done 拉回 running。
+    Reasonix 不特殊处理——此前 Stop 不标 done 会导致助手收尾后卡永远绿灯不亮。
     """
     task_id = _task_id_for(agent, event)
     existing = db.get_task(task_id)
@@ -526,23 +526,6 @@ def _handle_stop(agent: str, event: dict) -> dict:
         if not was_pending:
             _notify_after_log(task_id, "step", msg)
         return {"ok": True, "task_id": task_id, "action": "pending", "node_type": "step"}
-
-    # Reasonix：回合结束但会话还在 → 保持 running，只刷新末条；已结束不再救活
-    if agent == "reasonix":
-        if existing.get("status") not in ("running", "pending"):
-            return {"ok": True, "action": "skip", "reason": "already_ended"}
-        if hook_status == "error":
-            msg = snippet or "本轮出错"
-            log = db.log_node(task_id, "fail", msg, {"hook": "Stop", "status": hook_status})
-            db.bump_version()
-            if log is None:
-                return {"ok": False, "error": "task 不存在"}
-            _notify_after_log(task_id, "fail", msg)
-            return {"ok": True, "task_id": task_id, "action": "log_node", "node_type": "fail"}
-        if snippet:
-            db.update_progress(task_id, detail=snippet)
-            db.bump_version()
-        return {"ok": True, "task_id": task_id, "action": "turn_idle", "detail": snippet}
 
     if hook_status == "error":
         msg = snippet or "本轮出错结束"
@@ -565,10 +548,11 @@ def _handle_stop(agent: str, event: dict) -> dict:
 def _handle_session_end(agent: str, event: dict) -> dict:
     """关会话：已结束保持；pending/running 都标 done（会话真正关掉）。
 
-    Reasonix Desktop 会在页签仍打开时误发 SessionEnd(reason=other)
-    （controller 重建等）。这种假结束直接忽略；真正收尾靠：
+    Reasonix Desktop 在 controller 重建 / 模型切换时会误发 SessionEnd(reason=other)，
+    一律忽略。真正收尾靠：
+    - Stop（本轮结束）
     - SessionEnd reason=clear（/new）
-    - 页签已不在 desktop-tabs.json（含 watcher 补发的 tab_closed / app_quit）
+    - watcher 补发的 tab_closed / app_quit（页签已不在 desktop-tabs.json）
     """
     task_id = _task_id_for(agent, event)
     existing = db.get_task(task_id)
@@ -579,14 +563,23 @@ def _handle_session_end(agent: str, event: dict) -> dict:
         return {"ok": True, "task_id": task_id, "action": "keep", "status": st}
 
     reason = str(event.get("reason") or "other")
-    # Desktop 误发 other、或 watcher 在 tabs 抖动时误报 tab_closed：页签还开着就忽略
-    if agent == "reasonix" and reason in ("other", "tab_closed") and _reasonix_session_tab_open(task_id):
-        return {
-            "ok": True,
-            "task_id": task_id,
-            "action": "skip",
-            "reason": "spurious_session_end",
-        }
+    if agent == "reasonix":
+        # Desktop 的 other 不可信（重建 controller 也会发）
+        if reason == "other":
+            return {
+                "ok": True,
+                "task_id": task_id,
+                "action": "skip",
+                "reason": "spurious_session_end",
+            }
+        # watcher 在 tabs 抖动时误报：页签还开着就忽略
+        if reason == "tab_closed" and _reasonix_session_tab_open(task_id):
+            return {
+                "ok": True,
+                "task_id": task_id,
+                "action": "skip",
+                "reason": "spurious_session_end",
+            }
 
     msg = f"会话结束（{reason}）"
     log = db.log_node(task_id, "success", msg, {"hook": "SessionEnd", "reason": reason})

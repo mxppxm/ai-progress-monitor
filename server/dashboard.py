@@ -63,6 +63,14 @@ def index():
     return FileResponse(str(DASHBOARD_DIR / "index.html"))
 
 
+@app.get("/favicon.ico")
+def favicon():
+    return FileResponse(
+        str(DASHBOARD_DIR / "favicon-idle.svg"),
+        media_type="image/svg+xml",
+    )
+
+
 @app.get("/api/tasks")
 def tasks_api():
     return {"tasks": db.list_tasks(), "agents": focus.registered_agents()}

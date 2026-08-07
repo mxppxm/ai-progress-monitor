@@ -88,6 +88,18 @@
   function isRunning(t) { return t.status === "running"; }
   function isPending(t) { return t.status === "pending"; }
   function isEnded(t)   { return !isRunning(t) && !isPending(t); }
+
+  // 有运行中任务 → 彩色 favicon；否则灰阶
+  let lastFaviconActive = null;
+  function syncFavicon(list) {
+    const active = (list || []).some(isRunning);
+    if (active === lastFaviconActive) return;
+    lastFaviconActive = active;
+    const link = document.getElementById("favicon");
+    if (link) {
+      link.href = active ? "/static/favicon.svg" : "/static/favicon-idle.svg";
+    }
+  }
   const DONE_LABEL = { done: "已结束", failed: "已结束", paused: "暂停", pending: "待选择" };
   const JUST_ENDED_SEC = 30;
 
@@ -115,6 +127,7 @@
 
   function render(list) {
     tasks = list || [];
+    syncFavicon(tasks);
     const groups = {};
     tasks.forEach(t => { (groups[t.agent] = groups[t.agent] || []).push(t); });
 

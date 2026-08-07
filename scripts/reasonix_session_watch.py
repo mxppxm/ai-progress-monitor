@@ -5,9 +5,10 @@ Reasonix hooks 在会话构建时加载；长会话在补上 PreToolUse(ask) 之
 之后弹 ask 也不会走 hook。本监听兜底：
 
 1. events.jsonl 里 tool_calls.name=ask → pending；对应 tool 结果 → running
-2. Desktop 关掉/切走页签时常不发 SessionEnd → 对照 desktop-tabs.json，
-   不在打开页签里的 running/pending 任务，防抖后上报 SessionEnd
+2. Desktop 关掉/切走页签时常不发可靠 SessionEnd → 对照 desktop-tabs.json，
+   不在打开页签里的 running/pending 任务，防抖后上报 SessionEnd(tab_closed)
 3. Reasonix 进程退出后，同样把仍挂着的任务收尾
+   （Stop 本轮结束由 hook 直接标 done；本监听不再 revive）
 
 用法：
   .venv/bin/python scripts/reasonix_session_watch.py
@@ -212,27 +213,6 @@ def report_session_end(session_id: str, reason: str) -> None:
         log(f"session_end error sid={session_id}: {e}")
 
 
-def report_resume(session_id: str) -> None:
-    """误杀后页签仍开着：用 UserPromptSubmit 空提示词拉回 running（不改标题）。"""
-    event = {
-        "event": "UserPromptSubmit",
-        "sessionId": session_id,
-        "prompt": "",
-    }
-    try:
-        r = subprocess.run(
-            [str(PY), str(SCRIPT), "--agent", "reasonix"],
-            input=json.dumps(event, ensure_ascii=False),
-            capture_output=True,
-            text=True,
-            timeout=12,
-        )
-        out = (r.stdout or "").strip()
-        log(f"revive sid={session_id[:40]} code={r.returncode} out={out[:200]}")
-    except Exception as e:
-        log(f"revive error sid={session_id}: {e}")
-
-
 def _still_open(sid: str, open_exact: set[str]) -> bool:
     if sid in open_exact:
         return True
@@ -244,7 +224,12 @@ def _still_open(sid: str, open_exact: set[str]) -> bool:
 
 
 def reconcile_closed_sessions(state: dict) -> None:
-    """页签关掉或 App 退出时，补发 SessionEnd（保守：宁可晚收尾，不误杀）。"""
+    """页签关掉或 App 退出时，补发 SessionEnd（保守：宁可晚收尾，不误杀）。
+
+    不再把 done 拉回 running：Stop 本就会标 done，页签仍开着是正常的；
+    下一轮用户发消息由 UserPromptSubmit 重启。此前的 revive 会和
+    SessionEnd(other)/tab_closed 对打，结束态永远不稳。
+    """
     now = time.time()
     absent: dict = state.setdefault("absent_since", {})
     app_gone_since = state.get("app_gone_since")
@@ -284,13 +269,6 @@ def reconcile_closed_sessions(state: dict) -> None:
         state["tabs_empty_since"] = None
         open_exact = set(open_read)
         state["last_open_sids"] = sorted(open_exact)
-
-    # 页签还开着、却被误标 done → 拉回 running
-    for tid in list_reasonix_tasks("done"):
-        sid = task_session_suffix(tid)
-        if _still_open(sid, open_exact):
-            report_resume(sid)
-            absent.pop(tid, None)
 
     live = set(list_open_reasonix_tasks())
     for tid in list(absent.keys()):
