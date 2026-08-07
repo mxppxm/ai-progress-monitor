@@ -115,6 +115,8 @@ bash "$REPO/scripts/run_clacky_watch.sh"
 
 监听 `~/.clacky/sessions/*.json` → 调用 `hook_report.py --agent clacky`：
 新 user 消息 → SessionStart；tool / 工具调用 → PostToolUse；assistant 收尾静默约 5s → Stop。
+另：API `error` 字段（即使 status 仍 running）、长时间无事件、看板与本地状态不一致时也会补 Stop。
+API 不可用时回退读会话文件，但**不回放历史**（避免已结束任务被重新拉起）。
 
 排障日志：`~/Library/Logs/ai-progress-monitor/clacky-watch.log`。
 
