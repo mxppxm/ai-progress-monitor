@@ -185,12 +185,18 @@ def log_node(task_id: str, node_type: str, message: str, meta: dict | None = Non
     meta = meta or {}
     now = time.time()
     detail = (message or "").strip()[:500]
-    # 结束/拍板/停输出类节点：把末条文案写入任务 detail，供看板直接展示
+    # 结束/拍板/停输出/子任务类节点：把末条文案写入任务 detail，供看板直接展示
     write_detail = bool(detail) and (
         node_type in ("success", "fail")
         or is_choice_message(message)
         or meta.get("choice")
-        or meta.get("hook") in ("Stop", "AfterAgentResponse", "SessionEnd")
+        or meta.get("hook") in (
+            "Stop",
+            "AfterAgentResponse",
+            "SessionEnd",
+            "subagentStart",
+            "subagentStop",
+        )
     )
     with _LOCK, _connect() as conn:
         # 确保任务存在

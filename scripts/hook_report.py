@@ -397,6 +397,67 @@ def _handle_post_tool_use(agent: str, event: dict) -> dict:
     return {"ok": True, "task_id": task_id, "action": "log_node", "node_type": "step"}
 
 
+def _subagent_progress_text(event: dict, *, starting: bool) -> str:
+    """子代理开始/结束时写到父任务 detail 的短文案。"""
+    stype = str(event.get("subagent_type") or event.get("subagentType") or "subagent").strip()
+    task = str(event.get("task") or event.get("description") or "").strip()
+    if starting:
+        base = f"子任务开始（{stype}）"
+        return f"{base}：{task[:200]}" if task else base
+    status = str(event.get("status") or "completed").strip() or "completed"
+    summary = str(event.get("summary") or "").strip()
+    base = f"子任务结束（{stype}/{status}）"
+    if summary:
+        return f"{base}：{summary[:200]}"
+    if task:
+        return f"{base}：{task[:200]}"
+    return base
+
+
+def _handle_subagent_lifecycle(agent: str, event: dict, *, starting: bool) -> dict:
+    """子代理生命周期：挂到父会话任务上记进度，绝不把父任务标 done。
+
+    Cursor 的 subagentStart/Stop 在父 conversation_id 上下文触发；
+    旧逻辑把 subagentStop 映射成 Stop，会误结束父任务，之后父侧心跳全被 skip，
+    子代理自己的 conversation_id 又因「不建孤儿卡」而 skip —— 看板就「没进度」了。
+    """
+    task_id = _task_id_for(agent, event)
+    existing = db.get_task(task_id)
+    if existing is None:
+        return {"ok": True, "action": "skip", "reason": "no_task"}
+    if existing.get("status") not in ("running", "pending"):
+        return {"ok": True, "action": "skip", "reason": "not_active"}
+    if existing.get("status") == "pending":
+        _resume_task(agent, task_id, existing)
+    hook = "subagentStart" if starting else "subagentStop"
+    msg = _subagent_progress_text(event, starting=starting)
+    meta = {
+        "hook": hook,
+        "subagent": True,
+        "subagent_type": str(event.get("subagent_type") or event.get("subagentType") or ""),
+        "status": str(event.get("status") or ""),
+    }
+    log = db.log_node(task_id, "step", msg, meta)
+    db.bump_version()
+    if log is None:
+        return {"ok": False, "error": "task 不存在"}
+    return {
+        "ok": True,
+        "task_id": task_id,
+        "action": "subagent",
+        "node_type": "step",
+        "starting": starting,
+    }
+
+
+def _handle_subagent_start(agent: str, event: dict) -> dict:
+    return _handle_subagent_lifecycle(agent, event, starting=True)
+
+
+def _handle_subagent_stop(agent: str, event: dict) -> dict:
+    return _handle_subagent_lifecycle(agent, event, starting=False)
+
+
 def _pending_user_wait(
     agent: str,
     event: dict,
@@ -600,6 +661,8 @@ _HANDLERS = {
     "SessionEnd": _handle_session_end,
     "Notification": _handle_notification,
     "PermissionRequest": _handle_permission_request,
+    "SubagentStart": _handle_subagent_start,
+    "SubagentStop": _handle_subagent_stop,
 }
 
 # 各工作台事件名 → 本脚本统一名
@@ -611,10 +674,11 @@ _EVENT_ALIASES = {
     "postToolUse": "PostToolUse",
     "afterAgentResponse": "AfterAgentResponse",
     "stop": "Stop",
-    "subagentStop": "Stop",  # 子代理结束；若曾误建卡则收尾，无卡则 skip
+    "subagentStart": "SubagentStart",
+    "subagentStop": "SubagentStop",  # 父会话心跳，禁止当成 Stop
     # Codex / Claude / Reasonix 风格
     "UserPromptSubmit": "SessionStart",       # 用户提交提示词 → 建/重启 + 改标题
-    "SubagentStop": "Stop",
+    "SubagentStop": "SubagentStop",
 }
 
 

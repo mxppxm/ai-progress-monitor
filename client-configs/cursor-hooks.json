@@ -27,6 +27,11 @@
         "command": "<repo_root>/client-configs/cursor-hook.sh"
       }
     ],
+    "subagentStart": [
+      {
+        "command": "<repo_root>/client-configs/cursor-hook.sh"
+      }
+    ],
     "subagentStop": [
       {
         "command": "<repo_root>/client-configs/cursor-hook.sh"

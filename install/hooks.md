@@ -43,7 +43,7 @@ $REPO/.venv/bin/python $REPO/server/dashboard.py   # → http://127.0.0.1:8777
 3. 若本机曾用 MCP：从 `~/.cursor/mcp.json` 去掉 `ai-progress-monitor`；删除要求自觉调 `record_task` 的 Cursor rule（如 `~/.cursor/rules/ai-progress-monitor.mdc`）
 4. 提醒用户：Settings → Hooks 确认已加载；必要时重启 Cursor
 
-事件：`sessionStart` / `beforeSubmitPrompt` / `postToolUse` / `afterAgentResponse` / `stop` / `subagentStop` / `sessionEnd`
+事件：`sessionStart` / `beforeSubmitPrompt` / `postToolUse` / `afterAgentResponse` / `stop` / `subagentStart` / `subagentStop` / `sessionEnd`
 
 ### Claude Code
 
